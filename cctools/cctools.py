@@ -135,7 +135,44 @@ class CCTools(BaseModel):
         if VISUALDIR:
             self.ROOT.joinpath(self.VISUALDIR).mkdir(parents=True,exist_ok=True) 
         
-
+    def _get_cat(self,cat:Union[int,str]):
+        """获取类别信息, 用来判断类别是否存在"""
+        if isinstance(cat,int):
+            cat_str = self.CCDATA.cats.get(cat,None)
+            if cat_str:
+                return True, cat_str.get('name',None)
+            else:
+                return False, None
+        elif isinstance(cat,str):
+            for c in self.CCDATA.cats.values():
+                if c['name'] == cat:
+                    return True, c.get('id',None)
+            return False, None
+        else:
+            raise ValueError(f"Invalid category: {cat}")
+        
+    def _get_img(self,img:Union[int,str]):
+        """
+        获取图片信息, 用来判断图片是否存在
+        支持图片路径的模糊搜索
+        """
+        if isinstance(img,int):
+            img_str = self.CCDATA.imgs.get(img,None)
+            if img_str:
+                return True, img_str.get('file_name',None)
+            else:
+                return False, None
+        elif isinstance(img,str):
+            for img_id in self.CCDATA.imgs.values() :
+                if img_id['file_name'][:len(img)] == img:
+                    return True, img_id.get('id',None)
+            return False, None
+        else:
+            raise ValueError(f"Invalid image: {img}")
+    
+    def _get_imglist(self)->List[str]:
+        """获取图片列表"""
+        return [img['file_name'] for img in self.CCDATA.dataset['images']]
     
     def check_dir(self,VISUALDIR:Optional[bool]=None):
         """检查数据是否符合CCTools要求"""
@@ -202,5 +239,181 @@ class CCTools(BaseModel):
         if visual:
             New.visual(overwrite=overwrite)
         
-   
+    def static(self)->Dict:
+        """统计数据"""
+        stats = {
+                "total_images": len(self.CCDATA.dataset['images']),
+                "total_annotations": len(self.CCDATA.dataset['annotations']),
+                "annotations_per_category": {},
+                "annotations_per_image": {},
+                "images_without_annotations": 0,
+                "imgId_without_annotations": []
+            }
+
+        # Calculate annotations per category
+        for cat in self.CCDATA.dataset['categories']:
+            ann_count = len(self.CCDATA.getAnnIds(catIds=[cat['id']]))
+            stats["annotations_per_category"][cat['name']] = ann_count
+
+        # Calculate annotations per image
+        for img_id in self.CCDATA.dataset['images']:
+            ann_count = len(self.CCDATA.getAnnIds(imgIds=[img_id['id']]))
+            stats["annotations_per_image"][img_id['file_name']] = ann_count
+            if ann_count == 0:
+                stats["imgId_without_annotations"].append(img_id['id'])
+
+        logger.info("Dataset statistics calculation completed successfully.")
+        return stats
+    
+    def update_cat(self, newCat:Dict[int,str]):
+        """
+        根据给定的类别字典更新数据集中的类别
+        """
+        dataset = self.CCDATA.dataset
+        # Check if categories need to be expanded
+        rawCat = {cat['id']: cat['name'] for cat in dataset['categories']}
+        rawId = max(rawCat.keys())
+        
+        for _, new_name in newCat.items():
+            if new_name not in rawCat.values():
+                rawId += 1
+                dataset['categories'].append({
+                    'id': rawId,
+                    'name': new_name,
+                    'supercategory': ''
+                })
+                logger.info(f"Added new category: ID {rawId}, name '{new_name}'")
+        
+        newCat = {cat['id']: new_id for cat in dataset['categories'] for new_id, name in newCat.items() if cat['name'] == name}
+            
+        # Update categories
+        for category in dataset['categories']:
+            if category['id'] in newCat.keys():
+                old_id = category['id']
+                category['id'] = newCat[old_id]
+                logger.debug(f"Updating category ID: {old_id} -> {category['id']}")
+
+        # Update annotations
+        for annotation in dataset['annotations']:
+            if annotation['category_id'] in newCat.keys():
+                old_id = annotation['category_id']
+                annotation['category_id'] = newCat[old_id]
+                logger.debug(f"Updating annotation category ID: {old_id} -> {annotation['category_id']}")
+        self.CCDATA.createIndex()
+        
+    def rename_cat(self, old_name:str, new_name:str)->None:
+        """
+        修改类别名称
+        """
+        dataset = self.CCDATA.dataset
+        for category in dataset['categories']:
+            if category['name'] == old_name:
+                category['name'] = new_name
+                logger.debug(f"Updating category name: {old_name} -> {new_name}")
+        self.CCDATA.createIndex()
+    
+    def _align_cat(self,otherCat:Dict,cat_keep:bool=True)->Dict:
+        """
+        对齐两个数据集的类别
+        """
+        rawCat = {cat['id']: cat['name'] for cat in self.CCDATA.dataset['categories']}
+        if cat_keep:
+            newCat = rawCat
+            maxId = len(rawCat.keys())
+            for cat in otherCat:
+                if cat not in rawCat:
+                    maxId += 1
+                    rawCat[maxId] = otherCat[cat]
+                else:
+                    logger.warning(f"Category {cat} already exists in self dataset")
+        else:
+            newCat = otherCat
+            maxId = len(rawCat.keys())
+            for cat in rawCat:
+                if cat not in otherCat:
+                    maxId += 1
+                    newCat[maxId] = rawCat[cat]
+                else:
+                    logger.warning(f"Category {cat} already exists in other dataset")
+        
+        return newCat        
+    
+    def _updateIndex(self,imgIndex:Optional[int]=None,annIndex:Optional[int]=None):
+        """
+        更新数据集索引
+        """
+
+        imgIndex = imgIndex or 1
+        if imgIndex < 1:
+            raise ValueError("imgIndex must be greater than 0")
+        annIndex = annIndex or 1
+        if annIndex < 1:
+            raise ValueError("annIndex must be greater than 0")
+
+        img_id_map = {}
+        for img in self.CCDATA.dataset['images']:
+            img_id_map[img['id']] = imgIndex
+            img['id'] = imgIndex
+            imgIndex += 1
+            
+        for img_ann in self.CCDATA.dataset['annotations']:
+            if img_ann['image_id'] in img_id_map:
+                img_ann['image_id'] = img_id_map[img_ann['image_id']]
+            else:
+                logger.warning(f"Image ID {img_ann['image_id']} not found in img_id_map")
+
+
+        ann_id_map = {} # old: new                
+        for anns in self.CCDATA.dataset['annotations']:
+            ann_id_map[anns['id']] = annIndex
+            anns['id'] = annIndex
+            annIndex += 1
+        
+        self.CCDATA.createIndex()
+        
+            
+    def merge(self,other:CCTools,cat_keep:Optional[bool]=None,overwrite:Optional[bool]=None):
+        """
+        合并两个数据集
+        cat_keep: 类别保留方式, True: 以self为主, False: 以other为主
+        overwrite: 图片名称存在是否覆盖
+        """
+        cat_keep = cat_keep or True
+        overwrite = overwrite or False
+        otherCat = {cat['id']: cat['name'] for cat in other.CCDATA.dataset['categories']}
+        newCat = self._align_cat(otherCat=otherCat,cat_keep=cat_keep)
+        raw_imglist = self._get_imglist()
+        other_imgidlist = [img['id'] for img in other.CCDATA.dataset['images']]
+        
+        # 对齐两个数据集的类别
+        self.update_cat(newCat=newCat)
+        other.update_cat(newCat=newCat)
+        
+        if cat_keep:
+            self._updateIndex(imgIndex=1,annIndex=1)
+            other._updateIndex(imgIndex=len(self.CCDATA.imgs)+1,annIndex=len(self.CCDATA.anns)+1)
+        else:
+            other._updateIndex(imgIndex=1,annIndex=1)
+            self._updateIndex(imgIndex=len(other.CCDATA.imgs)+1,annIndex=len(other.CCDATA.anns)+1)
+        
+        
+        for img in other.CCDATA.dataset['images']:
+            # 检查是否重复
+            if img['file_name'] in raw_imglist:
+                if overwrite:
+                    self.CCDATA.dataset['images'].append(img)
+                else:
+                    logger.warning(f"Image {img['file_name']} already exists in other dataset")
+            else:
+                self.CCDATA.dataset['images'].append(img)
+
+
+        for ann in other.CCDATA.dataset['annotations']:
+            # 检查是否重复
+            if ann['image_id'] in other_imgidlist:
+                self.CCDATA.dataset['annotations'].append(ann)
+
+        self.CCDATA.createIndex()
+        pass
+        
         

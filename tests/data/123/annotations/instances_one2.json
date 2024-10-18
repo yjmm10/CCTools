@@ -1,0 +1,162 @@
+{
+    "licenses": [
+        {
+            "name": "",
+            "id": 0,
+            "url": ""
+        }
+    ],
+    "info": {
+        "contributor": "",
+        "date_created": "",
+        "description": "",
+        "url": "",
+        "version": "",
+        "year": ""
+    },
+    "categories": [
+        {
+            "id": 1,
+            "name": "Text",
+            "supercategory": ""
+        },
+        {
+            "id": 2,
+            "name": "Table",
+            "supercategory": ""
+        },
+        {
+            "id": 3,
+            "name": "Formula",
+            "supercategory": ""
+        },
+        {
+            "id": 4,
+            "name": "Figure",
+            "supercategory": ""
+        }
+    ],
+    "images": [
+        
+        {
+            "id": 2,
+            "width": 2244,
+            "height": 3175,
+            "file_name": "xx.png",
+            "license": 0,
+            "flickr_url": "",
+            "coco_url": "",
+            "date_captured": 0
+        }
+    ],
+    "annotations": [
+        {
+            "id": 10,
+            "image_id": 2,
+            "category_id": 1,
+            "segmentation": [],
+            "area": 1280159.0454999998,
+            "bbox": [
+                78.78,
+                1665.5,
+                981.83,
+                1303.85
+            ],
+            "iscrowd": 0,
+            "attributes": {
+                "occluded": false,
+                "rotation": 0.0
+            }
+        },
+        {
+            "id": 11,
+            "image_id": 2,
+            "category_id": 1,
+            "segmentation": [],
+            "area": 93472.6338,
+            "bbox": [
+                1066.11,
+                327.72,
+                969.03,
+                96.46
+            ],
+            "iscrowd": 0,
+            "attributes": {
+                "occluded": false,
+                "rotation": 0.0
+            }
+        },
+        {
+            "id": 12,
+            "image_id": 2,
+            "category_id": 3,
+            "segmentation": [],
+            "area": 260045.06279999993,
+            "bbox": [
+                1059.4,
+                434.84,
+                978.68,
+                265.71
+            ],
+            "iscrowd": 0,
+            "attributes": {
+                "occluded": false,
+                "rotation": 0.0
+            }
+        },
+        {
+            "id": 13,
+            "image_id": 2,
+            "category_id": 1,
+            "segmentation": [],
+            "area": 2245617.248,
+            "bbox": [
+                1057.3,
+                708.97,
+                1001.6,
+                2242.03
+            ],
+            "iscrowd": 0,
+            "attributes": {
+                "occluded": false,
+                "rotation": 0.0
+            }
+        },
+        {
+            "id": 14,
+            "image_id": 2,
+            "category_id": 2,
+            "segmentation": [],
+            "area": 638110.6885999998,
+            "bbox": [
+                66.83,
+                304.04,
+                979.99,
+                651.14
+            ],
+            "iscrowd": 0,
+            "attributes": {
+                "occluded": false,
+                "rotation": 0.0
+            }
+        },
+        {
+            "id": 15,
+            "image_id": 2,
+            "category_id": 2,
+            "segmentation": [],
+            "area": 599430.4833000001,
+            "bbox": [
+                58.06,
+                972.72,
+                979.99,
+                611.67
+            ],
+            "iscrowd": 0,
+            "attributes": {
+                "occluded": false,
+                "rotation": 0.0
+            }
+        }
+    ]
+}
