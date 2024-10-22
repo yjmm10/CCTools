@@ -32,6 +32,11 @@ def merge_one1():
 def merge_one2():
     return CCTools(ROOT=TEST_ROOT, ANNFILE=Path("instances_one2.json"), IMGDIR=TEST_IMGDIR, ANNDIR=TEST_ANNDIR)
 
+@pytest.fixture
+def split_file():
+    return CCTools(ROOT=TEST_ROOT, ANNFILE=Path("instances_split.json"), IMGDIR=TEST_IMGDIR, ANNDIR=TEST_ANNDIR)
+
+
 def test_cctools_init_with_file():
     cctools = CCTools(ROOT=TEST_ROOT, ANNFILE=TEST_ANNFILE, IMGDIR=TEST_IMGDIR, ANNDIR=TEST_ANNDIR)
     assert cctools.ANNFILE == TEST_ANNFILE
@@ -230,3 +235,6 @@ def test_correct(ccdata_file):
         assert newObj.ROOT == Path(temp_dir)
         assert len(newObj.CCDATA.dataset['annotations']) == 1
     pass
+
+def test_split(split_file):
+    split_file.split(ratio=[0.6,0.4],by_file=True)

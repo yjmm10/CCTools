@@ -1,14 +1,13 @@
 from __future__ import annotations
+from collections import defaultdict
 from pathlib import Path
+import re
 import tempfile
 from typing import Callable, Dict, List, Optional, Union, Any,Tuple
 from pydantic import BaseModel, Field
 from loguru import logger
 import os, json, shutil, copy, cv2
 import matplotlib.pyplot as plt
-
-from cctools.pipeline import CocoData
-
 
 from .cc import CC
 
@@ -379,7 +378,7 @@ class CCTools(BaseModel):
         self.CCDATA.createIndex()
         
             
-    def merge(self,other:CCTools,cat_keep:Optional[bool]=None,overwrite:Optional[bool]=None):
+    def _merge(self,other:CCTools,cat_keep:Optional[bool]=None,overwrite:Optional[bool]=None):
         """
         合并两个数据集
         cat_keep: 类别保留方式, True: 以self为主, False: 以other为主
@@ -421,7 +420,19 @@ class CCTools(BaseModel):
                 self.CCDATA.dataset['annotations'].append(ann)
 
         self.CCDATA.createIndex()
+
+    def merge(self,others:Union[CCTools,List[CCTools]],cat_keep:Optional[bool]=None,overwrite:Optional[bool]=None):
+        """
+        合并两个数据集
+        cat_keep: 类别保留方式, True: 以self为主, False: 以other为主
+        overwrite: 图片名称存在是否覆盖
+        """
+        if isinstance(others,CCTools):
+            others = [others]
+        for other in others:
+            self._merge(other=other,cat_keep=cat_keep,overwrite=overwrite)
         
+
     def _filter(self, catIds: Optional[List[int]] = [], imgIds: Optional[List[int]] = [], annIds: Optional[List[int]] = [], mod:Optional[str]="and"):
         """
         过滤数据集
@@ -600,4 +611,21 @@ class CCTools(BaseModel):
             return newObj
         else:
             self.CCDATA=newCC
+            
+    def split(self,ratio:List[float]=[0.7,0.2,0.1],by_file=False):
+        """
+        ratio:划分比例，按照训练集、验证集、测试集顺序
+        by_file:是否按照文件划分
 
+        """
+        if len(ratio)==2:
+            ratio.append(1-sum(ratio))
+
+        imglists = self._get_imglist()
+        samebooks = defaultdict(list)
+        for image in imglists:
+            match = re.match(r'(.+?)_(\d+)\..*', image)
+            if match:
+                prefix, page = match.groups()
+                samebooks[prefix].append(image)
+        samebooks = dict(samebooks)
