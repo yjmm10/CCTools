@@ -163,19 +163,9 @@ def one(root):
     newData = CCTools(ROOT=new_root)
     newData.correct(api_url=api_call,cats=["Table"],newObj=CCTools(ROOT=correct_root),visual=visual)
     
-    
-    # coco_data = CocoData(cocoRoot=new_root,
-    #                     annDir="annotations",
-    #                     imgDir="images",
-    #                     annFile="instances_default.json",visualDir="visual")
-    # correct_root = root.replace("raw","CORRECT")
-    # coco_data.correct_data(api_url=api_call,catIds=['Table'])
-    # coco_data.save_coco(cocoRoot=correct_root,annDir="annotations",imgDir="images",annFile="instances_default.json",visualDir="visual",visual=visual,overwrite=True)
-    
-    
 
-if __name__ == "__main__":
-    root = "/home/zyj/github/CCTools/竞品/raw"
+
+def filter_to_correct(root="/home/zyj/github/CCTools/竞品/raw"):
     dirlist = os.listdir(root)
     for data_dir in dirlist:
         # if data_dir in ["含交互式元素的文档",  "含图像的文档",  "含复杂布局和设计的文档",  "含表格和图表的文档",  "国标文件-新",  "教育领域-新"]:
@@ -183,3 +173,27 @@ if __name__ == "__main__":
         if data_dir in ["含目录的文档"]:
             if os.path.isdir(os.path.join(root,data_dir)):
                 one(os.path.join(root,data_dir))
+                
+def merge(root):
+    dirlist = os.listdir(root)
+    ccdata_files = []
+    for data_dir in dirlist:
+        data_path = os.path.join(root,data_dir)
+        if not os.path.isdir(data_path):
+            continue
+        ccdata_files.append(CCTools(ROOT=data_path))
+    
+    newObj = ccdata_files[0]
+    newObj.merge(newObj=ccdata_files[1:],cat_keep=True)
+    newObj.save(New=CCTools(ROOT=root.replace("raw","MERGE")),visual=False)
+    
+            
+    pass
+
+def split(root):
+    pass
+    
+    
+
+if __name__ == "__main__":
+    merge(root="/home/zyj/github/CCTools/竞品/raw")

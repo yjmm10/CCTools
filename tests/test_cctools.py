@@ -34,7 +34,7 @@ def merge_one2():
 
 @pytest.fixture
 def split_file():
-    return CCTools(ROOT=TEST_ROOT, ANNFILE=Path("instances_split.json"), IMGDIR=TEST_IMGDIR, ANNDIR=TEST_ANNDIR)
+    return CCTools(ROOT="/nas/projects/Github/CCTools/idp_q4/jingpin/raw/国标文件", ANNFILE=Path("instances_default.json"), IMGDIR=TEST_IMGDIR, ANNDIR=TEST_ANNDIR)
 
 
 def test_cctools_init_with_file():
@@ -237,4 +237,10 @@ def test_correct(ccdata_file):
     pass
 
 def test_split(split_file):
-    split_file.split(ratio=[0.6,0.4],by_file=True)
+    # with tempfile.TemporaryDirectory() as temp_dir:
+    temp_dir = Path("split_test")
+    newObj = CCTools(ROOT=Path(temp_dir))
+    trainObj,valObj,testObj = split_file.split(ratio=[0.6,0.4],newObj=newObj,by_file=False,visual=True)
+    assert len(trainObj.CCDATA.dataset['images']) + len(valObj.CCDATA.dataset['images']) + len(testObj.CCDATA.dataset['images']) <= len(split_file.CCDATA.dataset['images'])
+
+        

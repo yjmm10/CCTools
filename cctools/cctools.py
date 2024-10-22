@@ -1,6 +1,7 @@
 from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
+import random
 import re
 import tempfile
 from typing import Callable, Dict, List, Optional, Union, Any,Tuple
@@ -612,7 +613,7 @@ class CCTools(BaseModel):
         else:
             self.CCDATA=newCC
             
-    def split(self,ratio:List[float]=[0.7,0.2,0.1],by_file=False):
+    def split(self,ratio:List[float]=[0.7,0.2,0.1],by_file=False,newObj:Optional[CCTools]=None,visual:bool=False)->Union[Tuple[CCTools,CCTools,CCTools],Tuple[dict,dict,dict]]:
         """
         ratio:划分比例，按照训练集、验证集、测试集顺序
         by_file:是否按照文件划分
@@ -622,10 +623,100 @@ class CCTools(BaseModel):
             ratio.append(1-sum(ratio))
 
         imglists = self._get_imglist()
-        samebooks = defaultdict(list)
-        for image in imglists:
-            match = re.match(r'(.+?)_(\d+)\..*', image)
-            if match:
-                prefix, page = match.groups()
-                samebooks[prefix].append(image)
-        samebooks = dict(samebooks)
+        if by_file:
+            samebooks = defaultdict(list)
+            for image in imglists:
+                match = re.match(r'(.+?)_(\d+)\..*', image)
+                if match:
+                    prefix, page = match.groups()
+                    samebooks[prefix].append(image)
+            samebooks = dict(samebooks)
+            # 对每个key下的数据进行划分
+            split_data = {}
+            for key, images in samebooks.items():
+                total = len(images)
+                train_end = int(total * ratio[0])
+                val_end = int(total * (ratio[0] + ratio[1]))
+                
+                # 随机打乱图片列表
+                random.shuffle(images)
+                
+                # 划分数据
+                split_data[key] = {
+                    'train': images[:train_end],
+                    'val': images[train_end:val_end],
+                    'test': images[val_end:]
+                }
+            
+            # 合并所有子列表
+            train_set = [img for key in split_data for img in split_data[key]['train']]
+            val_set = [img for key in split_data for img in split_data[key]['val']]
+            test_set = [img for key in split_data for img in split_data[key]['test']]
+        else:
+            # 随机打乱图片列表
+            random.shuffle(imglists)
+            
+            train_set = imglists[:int(len(imglists)*ratio[0])]
+            val_set = imglists[int(len(imglists)*ratio[0]):int(len(imglists)*(ratio[0]+ratio[1]))]
+            test_set = imglists[int(len(imglists)*(ratio[0]+ratio[1])):]
+        
+        
+        train_imgIds = [self._get_img(img,force_int=True)[1] for img in train_set] if train_set else []
+        val_imgIds = [self._get_img(img,force_int=True)[1] for img in val_set] if val_set else []
+        test_imgIds = [self._get_img(img,force_int=True)[1] for img in test_set] if test_set else []
+        
+        train_annIds = self.CCDATA.getAnnIds(imgIds=train_imgIds) if train_imgIds else []
+        val_annIds = self.CCDATA.getAnnIds(imgIds=val_imgIds) if val_imgIds else []
+        test_annIds = self.CCDATA.getAnnIds(imgIds=test_imgIds) if test_imgIds else []
+        
+        train_catIds = val_catIds = test_catIds = list(range(1,len(self.CCDATA.dataset['categories'])+1))
+        
+        
+                
+        train_dict = self._gen_dict(catIds=train_catIds,imgIds=train_imgIds,annIds=train_annIds)
+        val_dict = self._gen_dict(catIds=val_catIds,imgIds=val_imgIds,annIds=val_annIds)
+        test_dict = self._gen_dict(catIds=test_catIds,imgIds=test_imgIds,annIds=test_annIds)
+        
+        if newObj:
+            srcRoot = self.ROOT.joinpath(self.IMGDIR)
+            
+            trainObj = copy.deepcopy(newObj)
+
+            
+            trainObj._CCDATA(train_dict)
+            trainObj.ANNFILE = Path("instances_Train.json")
+            train_imglist = trainObj._get_imglist()
+            dstRoot = newObj.ROOT.joinpath(newObj.IMGDIR)
+            for img in train_imglist:
+                src_path = srcRoot.joinpath(img)
+                dst_path = dstRoot.joinpath(img)
+                shutil.copy2(src_path, dst_path)
+            trainObj.save(New=trainObj,visual=visual)
+            
+            
+            
+            valObj = copy.deepcopy(newObj)
+            valObj._CCDATA(val_dict)
+            valObj.ANNFILE = Path("instances_Val.json")
+            val_imglist = valObj._get_imglist()
+            for img in val_imglist:
+                src_path = srcRoot.joinpath(img)
+                dst_path = dstRoot.joinpath(img)
+                shutil.copy2(src_path, dst_path)
+            valObj.save(New=valObj,visual=visual)
+            
+            
+            testObj = copy.deepcopy(newObj)
+            testObj._CCDATA(test_dict)
+            testObj.ANNFILE = Path("instances_Test.json")
+            test_imglist = testObj._get_imglist()
+            for img in test_imglist:
+                src_path = srcRoot.joinpath(img)
+                dst_path = dstRoot.joinpath(img)
+                shutil.copy2(src_path, dst_path)
+            testObj.save(New=testObj,visual=visual)
+            
+
+            return trainObj,valObj,testObj
+        else:
+            return train_dict,val_dict,test_dict
