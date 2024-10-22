@@ -1,11 +1,13 @@
 from __future__ import annotations
 from pathlib import Path
 import tempfile
-from typing import Dict, List, Optional, Union, Any,Tuple
+from typing import Callable, Dict, List, Optional, Union, Any,Tuple
 from pydantic import BaseModel, Field
 from loguru import logger
 import os, json, shutil, copy, cv2
 import matplotlib.pyplot as plt
+
+from cctools.pipeline import CocoData
 
 
 from .cc import CC
@@ -96,7 +98,7 @@ class CCTools(BaseModel):
             self.CCDATA = CC(temp_file_name)
 
             # Delete the temporary file
-            os.unlink(temp_file_name)
+            # os.unlink(temp_file_name)
     
     def _DICT(self)->Dict:
         logger.debug("Converting COCO object to dictionary")
@@ -135,9 +137,11 @@ class CCTools(BaseModel):
         if VISUALDIR:
             self.ROOT.joinpath(self.VISUALDIR).mkdir(parents=True,exist_ok=True) 
         
-    def _get_cat(self,cat:Union[int,str]):
+    def _get_cat(self,cat:Union[int,str],force_int:bool=False):
         """获取类别信息, 用来判断类别是否存在"""
         if isinstance(cat,int):
+            if force_int:
+                return True, cat
             cat_str = self.CCDATA.cats.get(cat,None)
             if cat_str:
                 return True, cat_str.get('name',None)
@@ -151,12 +155,14 @@ class CCTools(BaseModel):
         else:
             raise ValueError(f"Invalid category: {cat}")
         
-    def _get_img(self,img:Union[int,str]):
+    def _get_img(self,img:Union[int,str],force_int:bool=False):
         """
         获取图片信息, 用来判断图片是否存在
         支持图片路径的模糊搜索
         """
         if isinstance(img,int):
+            if force_int:
+                return True, img
             img_str = self.CCDATA.imgs.get(img,None)
             if img_str:
                 return True, img_str.get('file_name',None)
@@ -211,8 +217,8 @@ class CCTools(BaseModel):
         logger.info(f"Visualization completed. Output saved to {self.ROOT.joinpath(self.VISUALDIR)}")
         
     def save(self,New:CCTools,visual:bool=True,overwrite:bool=True): 
-        
-        assert self.CCDATA,logger.error("CCDATA is None")
+        # 自己保存自己，存在数据无法保存问题
+        assert self.CCDATA, logger.error("CCDATA is None")
         
         CCDIT = self._DICT()
 
@@ -231,9 +237,10 @@ class CCTools(BaseModel):
             src_path = src_root.joinpath(src_imgDir,img['file_name'])
             dst_path = dst_root.joinpath(dst_imgDir,img['file_name'])
             
-            if overwrite and dst_path.exists():
-                os.remove(dst_path)
-            shutil.copy2(src_path, dst_path)
+            # if overwrite and dst_path.exists():
+            #     os.remove(dst_path)
+            if not dst_path.exists():
+                shutil.copy2(src_path, dst_path)
         New.CCDATA = self.CCDATA
         # 保存
         if visual:
@@ -414,6 +421,183 @@ class CCTools(BaseModel):
                 self.CCDATA.dataset['annotations'].append(ann)
 
         self.CCDATA.createIndex()
-        pass
+        
+    def _filter(self, catIds: Optional[List[int]] = [], imgIds: Optional[List[int]] = [], annIds: Optional[List[int]] = [], mod:Optional[str]="and"):
+        """
+        过滤数据集
+        mod: 过滤方式, "and": 同时满足, "or": 满足其一的并集
+        """
+        if mod == "and":
+            return self._filter_and(catIds=catIds,imgIds=imgIds,annIds=annIds)
+        elif mod == "or":
+            return self._filter_or(catIds=catIds,imgIds=imgIds,annIds=annIds)
+        else:
+            raise ValueError(f"Invalid mod: {mod}")
+
+    
+    def _filter_and(self, catIds: Optional[List[int]] = [], imgIds: Optional[List[int]] = [], annIds: Optional[List[int]] = []):
+        """
+        为空，表示所有值
+        """
+        final_annIds = []
+            
+        annLists = self.CCDATA.getAnnIds(imgIds=imgIds,catIds=catIds)
+        if annIds:
+            for ann in annLists:
+                if ann in annIds:
+                    final_annIds.append(ann)
+        else:
+            final_annIds = annLists
+            
+        return final_annIds
+    
+    def _filter_or(self, catIds: Optional[List[int]] = [], imgIds: Optional[List[int]] = [], annIds: Optional[List[int]] = []):
+        """
+        为空，表示不获取任何值
+        """
+        res_cats = self._filter_and(catIds=catIds) if catIds else []
+        res_imgs = self._filter_and(imgIds=imgIds) if imgIds else []
+        res_anns = self._filter_and(annIds=annIds) if annIds else []
+        # 计算并集
+        final_annIds = set(res_cats + res_imgs + res_anns)
+        return list(final_annIds)
+    
+    def _get_imgIds_by_annIds(self,annIds:List[int]):
+        """
+        根据annIds获取图片id
+        """
+        return list(set([ann['image_id'] for ann in self.CCDATA.dataset['annotations'] if ann['id'] in annIds]))
+    
+    def _get_catIds_by_annIds(self,annIds:List[int]):
+        """
+        根据annIds获取类别id
+        """
+        return list(set([ann['category_id'] for ann in self.CCDATA.dataset['annotations'] if ann['id'] in annIds]))
+    
+    def _get_data(self,annIds:List[int],level:str="img"):
+        """
+        根据annIds获取数据
+        """
+        if not annIds:
+            return [],[],[]
+        
+        if level == "img":
+            res_imgIds = self._get_imgIds_by_annIds(annIds=annIds)
+            res_annIds = self.CCDATA.getAnnIds(imgIds=res_imgIds)
+            res_catIds = self._get_catIds_by_annIds(annIds=res_annIds)
+        elif level == "ann":
+            res_imgIds = self._get_imgIds_by_annIds(annIds=annIds)
+            res_annIds = annIds
+            res_catIds = self._get_catIds_by_annIds(annIds=res_annIds)
+        else:
+            raise ValueError(f"Invalid level: {level}")
+        
+        return res_catIds,res_imgIds,res_annIds
+    
+    def _gen_dict(self,catIds:List[int],imgIds:List[int],annIds:List[int],alignCat:bool=True):
+        if not catIds:
+            return {}
+        new_dataset = {
+            'info': self.CCDATA.dataset['info'],
+            'licenses': self.CCDATA.dataset['licenses'],
+            'images': [img for img in self.CCDATA.dataset['images'] if img['id'] in imgIds],
+            'annotations': [ann for ann in self.CCDATA.dataset['annotations'] if ann['id'] in annIds],
+            'categories': [cat for cat in self.CCDATA.dataset['categories'] if cat['id'] in catIds]
+        }
+        if isinstance(alignCat,bool):
+            new_dataset['categories'] = [cat for cat in self.CCDATA.dataset['categories']]
+
+        return new_dataset
+     
+    def filter(self, cats: Optional[List[Union[int,str]]] = [], imgs: Optional[List[Union[int,str]]] = [], annIds: Optional[List[int]] = [], mod:Optional[str]="and", newObj:Optional[CCTools]=None,visual:bool=False,alignCat:bool=True,sep_data:bool=False,level="img")->Union[dict,CCTools]:
+        """
+        过滤数据集,图像支持模糊搜索，类别支持id或名称搜索，标签为过滤的结果，设置alignCat对齐类别结果
+        mod: 过滤方式, "and": 同时满足, "or": 满足单个的所有并集
+        level: 过滤结果的级别, "img": 图片, "ann": 标签，即过滤后的标注数量
+        sep_data: 是否分离数据，即是否返回新的CCTools对象
+        alignCat: 对齐类别，bool: True, 对齐self, Dict: 对齐指定的类别
+        """
+        # 获取id
+        imgIds = [self._get_img(img,force_int=True)[1] for img in imgs if self._get_img(img,force_int=True)[0]]
+        catIds = [self._get_cat(cat,force_int=True)[1] for cat in cats if self._get_cat(cat,force_int=True)[0]]
         
         
+        dst_annIds = self._filter(catIds=catIds, imgIds=imgIds, annIds=annIds,mod=mod)
+        dst_catIds,dst_imgIds,dst_annIds = self._get_data(annIds=dst_annIds,level=level)
+        dst_dict = self._gen_dict(catIds=dst_catIds,imgIds=dst_imgIds,annIds=dst_annIds,alignCat=alignCat)
+        
+        
+        if sep_data:
+            all_annIds = [ann['id'] for ann in self.CCDATA.dataset['annotations']] 
+            sep_annIds = set(all_annIds) - set(dst_annIds)
+            sep_catIds,sep_imgIds,sep_annIds = self._get_data(annIds=sep_annIds,level=level)
+            sep_dict = self._gen_dict(catIds=sep_catIds,imgIds=sep_imgIds,annIds=sep_annIds,alignCat=alignCat)
+            if sep_dict:
+                self._CCDATA(sep_dict)  
+            else:
+                logger.warning("No data after separation,keep the original data")
+            
+        if newObj:
+            newObj._CCDATA(dst_dict)
+            imglist = newObj._get_imglist()
+            srcRoot = self.ROOT.joinpath(self.IMGDIR)
+            dstRoot = newObj.ROOT.joinpath(newObj.IMGDIR)
+            for img in imglist:
+                src_path = srcRoot.joinpath(img)
+                dst_path = dstRoot.joinpath(img)
+                shutil.copy2(src_path, dst_path)
+            newObj.save(New=newObj,visual=visual)
+            return newObj
+        else:
+            return dst_dict
+        
+    def correct(self, api_url:Callable, cats:Union[int,str,list], newObj:Optional[CCTools]=None, visual:bool=False):
+        if isinstance(cats,list):
+            catIds = [self._get_cat(cat,force_int=True)[1] for cat in cats]
+        else:
+            catIds = [self._get_cat(cats,force_int=True)[1]]
+             
+        imgDir = self.ROOT.joinpath(self.IMGDIR)
+        
+        newCC = copy.deepcopy(self.CCDATA)
+        sys_anns = newCC.getCatIds()
+        imgIds = newCC.getImgIds()
+
+        
+        for img_id in imgIds:
+            img = newCC.loadImgs(img_id)[0]
+            imgpath = imgDir.joinpath(img['file_name'])
+
+            one_annoIds = newCC.getAnnIds(imgIds=img['id'])
+            one_anns = newCC.loadAnns(one_annoIds)
+            for ann in one_anns:                
+                if ann['category_id'] not in catIds:
+                    continue
+                
+                bbox = ann['bbox']
+                x, y, w, h = bbox
+                x1, y1 = int(x), int(y)
+                x2, y2 = int(x+w), int(y+h)
+                bbox = [x1,y1,x2,y2]
+
+                # Call API, pass in the temporary file path
+                api_res = api_url(imgpath,bbox)
+                if api_res not in sys_anns:
+                    raise ValueError(f"API returned category ID is not in system categories, please confirm the value is between 1 and {len(sys_anns)}")
+                # Apply API results directly to annotation
+                ann['category_id'] = api_res
+
+        if newObj:
+            newObj.CCDATA=newCC
+            imglist = newObj._get_imglist()
+            srcRoot = self.ROOT.joinpath(self.IMGDIR)
+            dstRoot = newObj.ROOT.joinpath(newObj.IMGDIR)
+            for img in imglist:
+                src_path = srcRoot.joinpath(img)
+                dst_path = dstRoot.joinpath(img)
+                shutil.copy2(src_path, dst_path)
+            newObj.save(New=newObj,visual=visual)
+            return newObj
+        else:
+            self.CCDATA=newCC
+

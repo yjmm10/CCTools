@@ -131,3 +131,102 @@ def test_merge(merge_one1,merge_one2):
 def test_merge_without_overwrite(merge_one1,merge_one2):
     merge_one1.merge(other=merge_one2,cat_keep=True,overwrite=False)
     pass
+
+def test_filter_and(ccdata_file):
+    result = ccdata_file._filter(catIds=[1],imgIds=[1],annIds=[2])
+    assert len(result) == 1
+
+def test_filter_or(ccdata_file):
+    # 获取所有包含catIds=1的结果加上所有所有imgIds=1的annIds
+    result = ccdata_file._filter(catIds=[1],imgIds=[1],mod="or")
+    assert len(result) == 12
+
+def test_filter(ccdata_file):
+    result = ccdata_file._filter(catIds=[1],imgIds=[1,2],annIds=[1,2])
+    assert len(result) == 2
+
+def test_filter_alignCat(ccdata_file):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        newObj = CCTools(ROOT=Path(temp_dir))
+        ccdata_file.filter(imgs=[1,],newObj=newObj,alignCat=True)
+        assert newObj.ROOT == Path(temp_dir)
+        assert len(newObj.CCDATA.dataset['categories']) == len(ccdata_file.CCDATA.dataset['categories'])
+        
+def test_filter_no_alignCat(ccdata_file):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        newObj = CCTools(ROOT=Path(temp_dir))
+        ccdata_file.filter(imgs=[1,],newObj=newObj,alignCat=False)
+        assert newObj.ROOT == Path(temp_dir)
+        assert len(newObj.CCDATA.dataset['images']) == 1
+
+def test_get_imgIds_by_annIds(ccdata_file):
+    result = ccdata_file._get_imgIds_by_annIds(annIds=[13,14])
+    assert result == [2]
+
+def test_filter_multi_cond(ccdata_file):
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        newObj = CCTools(ROOT=Path(temp_dir))
+        ccdata_file.filter(imgs=["xx"],cats=["Formula"],newObj=newObj,mod="and",visual=True)
+        assert newObj.ROOT == Path(temp_dir)
+        assert len(newObj.CCDATA.dataset['images']) == 1
+
+
+def test_filter_multi_cond_or(ccdata_file):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        newObj = CCTools(ROOT=Path(temp_dir))
+        ccdata_file.filter(imgs=["xx"],cats=["Formula"],newObj=newObj,mod="or",visual=True)
+        assert newObj.ROOT == Path(temp_dir)
+        assert len(newObj.CCDATA.dataset['images']) == 2
+
+def test_filter_multi_cond_level_ann(ccdata_file):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        newObj = CCTools(ROOT=Path(temp_dir))
+        ccdata_file.filter(imgs=["xx"],cats=["Formula"],newObj=newObj,mod="and",visual=True,level="ann")
+        assert newObj.ROOT == Path(temp_dir)
+        assert len(newObj.CCDATA.dataset['images']) == 1
+        assert len(newObj.CCDATA.dataset['annotations']) == 1
+        
+def test_filter_sep_level_img(ccdata_file):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        newObj = CCTools(ROOT=Path(temp_dir))
+        ccdata_file.filter(imgs=["xx"],cats=["Formula"],newObj=newObj,visual=True,level="img",sep_data=True)
+        assert newObj.ROOT == Path(temp_dir)
+        assert len(newObj.CCDATA.dataset['images']) == 1
+        assert len(ccdata_file.CCDATA.dataset['images']) == 1
+        
+        with tempfile.TemporaryDirectory() as temp_dir2:
+            newObj.save(New=CCTools(ROOT=Path(temp_dir2)),visual=True)
+            assert Path(temp_dir2).exists()
+        
+def test_filter_sep_leve_ann(ccdata_file):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        newObj = CCTools(ROOT=Path(temp_dir))
+        ccdata_file.filter(imgs=["xx"],cats=["Formula"],newObj=newObj,visual=True,level="ann",sep_data=True)
+        assert newObj.ROOT == Path(temp_dir)
+        assert len(newObj.CCDATA.dataset['images']) == 1
+    
+    with tempfile.TemporaryDirectory() as temp_dir2:
+        newObj.save(New=CCTools(ROOT=Path(temp_dir2)),visual=True)
+        assert Path(temp_dir2).exists()
+        
+def test_filter_sep_level_img_alignCat_or(ccdata_file):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        newObj = CCTools(ROOT=Path(temp_dir))
+        ccdata_file.filter(imgs=["xx"],cats=["Formula"],mod="or",newObj=newObj,visual=True,level="img",sep_data=True,alignCat=True)
+        assert newObj.ROOT == Path(temp_dir)
+        assert len(newObj.CCDATA.dataset['images']) == 2
+        
+        with tempfile.TemporaryDirectory() as temp_dir2:
+            newObj.save(New=CCTools(ROOT=Path(temp_dir2)),visual=True)
+            assert Path(temp_dir2).exists()
+            assert len(newObj.CCDATA.dataset['images']) == 2
+            
+            
+def test_correct(ccdata_file):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        newObj = CCTools(ROOT=Path(temp_dir))
+        ccdata_file.correct(api_url=lambda x,y:1,cats=["Formula"],newObj=newObj)
+        assert newObj.ROOT == Path(temp_dir)
+        assert len(newObj.CCDATA.dataset['annotations']) == 1
+    pass

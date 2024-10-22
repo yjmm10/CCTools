@@ -23,6 +23,13 @@ git remote add origin git@github.com:Jasper/CCTools.git
 git push -u origin main
 ```
 
+Secondly, activate env
+
+```bash
+poetry shell
+poetry install
+```
+
 Finally, install the environment and the pre-commit hooks with
 
 ```bash
