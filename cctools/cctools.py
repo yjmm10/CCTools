@@ -52,6 +52,7 @@ class CCTools(BaseModel):
                  VISUALDIR: Optional[Union[Path, str]] = None,
                  CCDATA: Optional[Union[dict, CC]] = None,
                  CP_IMGPATH: Optional[Union[Path, str]] = None,
+                 validate_force:bool=True,
                  **kwargs):
         """
         初始化 CCTools 对象，确保所有路径输入都被转换为 Path 对象。
@@ -86,6 +87,13 @@ class CCTools(BaseModel):
         self._checkpath()
         # 创建目录
         self._mkCCDIR(self.IMGDIR)
+        
+        # Validate data if image directory contains files and validate_force is True
+        img_dir = self.ROOT.joinpath(self.IMGDIR)
+        if img_dir.exists() and len(list(img_dir.iterdir())) > 0 and self.validate_force:
+            logger.info(f"Found images in directory {img_dir}, starting data validation...")
+            self._validate_data()
+            logger.info("Data validation completed")
 
 
     def _validate_data(self)->None:

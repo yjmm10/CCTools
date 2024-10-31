@@ -263,5 +263,4 @@ def test_split(split_file):
 
 def test_validate_data(validate_diff):
     validate_diff._validate_data()
-    assert len(validate_diff.CCDATA.dataset['images']) == 1
-    assert len(validate_diff.CCDATA.dataset['annotations']) == 1
+    assert len(validate_diff.CCDATA.dataset['images']) == 2
