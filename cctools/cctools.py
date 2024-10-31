@@ -38,7 +38,8 @@ class CCTools(BaseModel):
     ANNDIR: Optional[Path] = Path("annotations")
     VISUALDIR: Optional[Path] = Path("visual")
     CCDATA: Optional[Union[dict,CC]]=None
-        
+    CP_IMGPATH: Optional[Union[Path,str]] = None
+    
     model_config = {
         "arbitrary_types_allowed": True
     }
@@ -50,6 +51,7 @@ class CCTools(BaseModel):
                  ANNFILE: Optional[Union[Path, str]] = None,
                  VISUALDIR: Optional[Union[Path, str]] = None,
                  CCDATA: Optional[Union[dict, CC]] = None,
+                 CP_IMGPATH: Optional[Union[Path, str]] = None,
                  **kwargs):
         """
         初始化 CCTools 对象，确保所有路径输入都被转换为 Path 对象。
@@ -61,6 +63,7 @@ class CCTools(BaseModel):
         self.IMGDIR = Path(IMGDIR or self.IMGDIR)
         self.ANNFILE = Path(ANNFILE or self.ANNFILE)
         self.VISUALDIR = Path(VISUALDIR or self.VISUALDIR)
+        self.CP_IMGPATH = Path(CP_IMGPATH or self.ROOT.joinpath(self.IMGDIR))
         
         annPath = self.ROOT.joinpath(self.ANNDIR).joinpath(self.ANNFILE)
         
@@ -84,6 +87,43 @@ class CCTools(BaseModel):
         # 创建目录
         self._mkCCDIR(self.IMGDIR)
 
+
+    def _validate_data(self)->None:
+        """Validate data"""
+        # Get all images from the actual image directory
+        img_dir = self.ROOT.joinpath(self.IMGDIR)
+        real_imgs = set([f.name for f in img_dir.iterdir() if f.is_file()])
+        
+        # Get all images from annotation file
+        anno_imgs = set([img['file_name'] for img in self.CCDATA.dataset['images']])
+        
+        # Get annotations
+        
+        # Find differences
+        missing_imgs = anno_imgs - real_imgs  # Images in annotation file but missing from directory
+        extra_imgs = real_imgs - anno_imgs    # Images in directory but missing from annotation file
+        
+        # Log differences
+        if missing_imgs:
+            logger.warning(f"Following images exist in annotation file but missing from directory: {missing_imgs}")
+        if extra_imgs:
+            logger.warning(f"Following images exist in directory but missing from annotation file: {extra_imgs}")
+            
+        # Only keep data without differences
+        if missing_imgs:
+            # Filter out annotations for missing images
+            valid_imgs = [img for img in self.CCDATA.dataset['images'] 
+                         if img['file_name'] not in missing_imgs]
+            valid_img_ids = set(img['id'] for img in valid_imgs)
+            
+            valid_anns = [ann for ann in self.CCDATA.dataset['annotations'] 
+                         if ann['image_id'] in valid_img_ids]
+            
+            self.CCDATA.dataset['images'] = valid_imgs
+            self.CCDATA.dataset['annotations'] = valid_anns
+            self.CCDATA.createIndex()
+        pass    
+        
     def _CCDATA(self,CCDATA:Union[dict,CC])->None:
         if isinstance(CCDATA,CC):
             self.CCDATA = CCDATA
@@ -298,14 +338,13 @@ class CCTools(BaseModel):
             if category['id'] in newCat.keys():
                 old_id = category['id']
                 category['id'] = newCat[old_id]
-                logger.debug(f"Updating category ID: {old_id} -> {category['id']}")
+                # logger.debug(f"Updating category ID: {old_id} -> {category['id']}")
 
         # Update annotations
         for annotation in dataset['annotations']:
             if annotation['category_id'] in newCat.keys():
                 old_id = annotation['category_id']
                 annotation['category_id'] = newCat[old_id]
-                logger.debug(f"Updating annotation category ID: {old_id} -> {annotation['category_id']}")
         self.CCDATA.createIndex()
         
     def rename_cat(self, old_name:str, new_name:str)->None:
@@ -381,7 +420,7 @@ class CCTools(BaseModel):
             
     def _merge(self,other:CCTools,cat_keep:Optional[bool]=None,overwrite:Optional[bool]=None):
         """
-        合并两个数据集
+        合并两个数据集,不能为空
         cat_keep: 类别保留方式, True: 以self为主, False: 以other为主
         overwrite: 图片名称存在是否覆盖
         """
@@ -422,16 +461,55 @@ class CCTools(BaseModel):
 
         self.CCDATA.createIndex()
 
-    def merge(self,others:Union[CCTools,List[CCTools]],cat_keep:Optional[bool]=None,overwrite:Optional[bool]=None):
+    def _cp_img(self):
+        imglist = self._get_imglist()
+        for img in imglist:
+            src_path = self.CP_IMGPATH.joinpath(img)
+            dst_path = self.ROOT.joinpath(self.IMGDIR).joinpath(img)
+            
+            if dst_path.exists():
+                continue
+            elif src_path.exists():
+                shutil.copy2(src_path, dst_path)
+            else:
+                logger.warning(f"Image {img} not found in {self.CP_IMGPATH}")
+            
+
+    def merge(self,others:Union[CCTools,List[CCTools]],cat_keep:Optional[bool]=None,overwrite:Optional[bool]=None,newObj:CCTools=None):
         """
-        合并两个数据集
+        合并两个数据集,self可为空
         cat_keep: 类别保留方式, True: 以self为主, False: 以other为主
         overwrite: 图片名称存在是否覆盖
+        return: 数据存储到新的newObj
         """
+        assert newObj, logger.error("newObj is required")
         if isinstance(others,CCTools):
             others = [others]
+        
+        
+        nums = 0
+        
+        if self.CCDATA is None:
+            newObj.CCDATA = copy.deepcopy(others[0].CCDATA)
+            nums += len(newObj._get_imglist())
+            newObj.CP_IMGPATH = others[0].ROOT.joinpath(others[0].IMGDIR)
+            newObj._cp_img()
+            others = others[1:]    
+        else:
+            newObj.CCDATA = copy.deepcopy(self.CCDATA)
+            nums += len(newObj._get_imglist())
+            newObj.CP_IMGPATH = self.ROOT.joinpath(self.IMGDIR)
+            newObj._cp_img()  
+        
+
         for other in others:
-            self._merge(other=other,cat_keep=cat_keep,overwrite=overwrite)
+            # 合并后
+            newObj._merge(other=other,cat_keep=cat_keep,overwrite=overwrite)
+            nums += len(other._get_imglist())
+            newObj.CP_IMGPATH = other.ROOT.joinpath(other.IMGDIR)
+            newObj._cp_img()
+        
+        logger.info(f"Merge {nums} images, Total {len(newObj._get_imglist())} images")
         
 
     def _filter(self, catIds: Optional[List[int]] = [], imgIds: Optional[List[int]] = [], annIds: Optional[List[int]] = [], mod:Optional[str]="and"):
@@ -510,8 +588,8 @@ class CCTools(BaseModel):
         if not catIds:
             return {}
         new_dataset = {
-            'info': self.CCDATA.dataset['info'],
-            'licenses': self.CCDATA.dataset['licenses'],
+            'info': self.CCDATA.dataset.get('info',[]),
+            'licenses': self.CCDATA.dataset.get('licenses',[]),
             'images': [img for img in self.CCDATA.dataset['images'] if img['id'] in imgIds],
             'annotations': [ann for ann in self.CCDATA.dataset['annotations'] if ann['id'] in annIds],
             'categories': [cat for cat in self.CCDATA.dataset['categories'] if cat['id'] in catIds]
@@ -528,6 +606,8 @@ class CCTools(BaseModel):
         level: 过滤结果的级别, "img": 图片, "ann": 标签，即过滤后的标注数量
         sep_data: 是否分离数据，即是否返回新的CCTools对象
         alignCat: 对齐类别，bool: True, 对齐self, Dict: 对齐指定的类别
+        
+        return: 如果设置了newObj,则返回新的CCTools对象，否则返回过滤后的dict数据集
         """
         # 获取id
         imgIds = [self._get_img(img,force_int=True)[1] for img in imgs if self._get_img(img,force_int=True)[0]]
@@ -538,30 +618,43 @@ class CCTools(BaseModel):
         dst_catIds,dst_imgIds,dst_annIds = self._get_data(annIds=dst_annIds,level=level)
         dst_dict = self._gen_dict(catIds=dst_catIds,imgIds=dst_imgIds,annIds=dst_annIds,alignCat=alignCat)
         
-        
+        # 分离数据：保留 + 过滤 = 原始
         if sep_data:
             all_annIds = [ann['id'] for ann in self.CCDATA.dataset['annotations']] 
             sep_annIds = set(all_annIds) - set(dst_annIds)
             sep_catIds,sep_imgIds,sep_annIds = self._get_data(annIds=sep_annIds,level=level)
             sep_dict = self._gen_dict(catIds=sep_catIds,imgIds=sep_imgIds,annIds=sep_annIds,alignCat=alignCat)
-            if sep_dict:
-                self._CCDATA(sep_dict)  
+
+            if newObj:
+                newObj._CCDATA(dst_dict)
+                imglist = newObj._get_imglist()
+                srcRoot = self.ROOT.joinpath(self.IMGDIR)
+                dstRoot = newObj.ROOT.joinpath(newObj.IMGDIR)
+                for img in imglist:
+                    src_path = srcRoot.joinpath(img)
+                    dst_path = dstRoot.joinpath(img)
+                    shutil.copy2(src_path, dst_path)
+                newObj.save(New=newObj,visual=visual)
+                if sep_dict:
+                    self._CCDATA(sep_dict)  
+                return newObj
             else:
-                logger.warning("No data after separation,keep the original data")
-            
-        if newObj:
-            newObj._CCDATA(dst_dict)
-            imglist = newObj._get_imglist()
-            srcRoot = self.ROOT.joinpath(self.IMGDIR)
-            dstRoot = newObj.ROOT.joinpath(newObj.IMGDIR)
-            for img in imglist:
-                src_path = srcRoot.joinpath(img)
-                dst_path = dstRoot.joinpath(img)
-                shutil.copy2(src_path, dst_path)
-            newObj.save(New=newObj,visual=visual)
-            return newObj
+                self._CCDATA(sep_dict)  
+        # 保留 = 原始，过滤<原始，只保留过滤
         else:
-            return dst_dict
+            if newObj:
+                newObj._CCDATA(dst_dict)
+                imglist = newObj._get_imglist()
+                srcRoot = self.ROOT.joinpath(self.IMGDIR)
+                dstRoot = newObj.ROOT.joinpath(newObj.IMGDIR)
+                for img in imglist:
+                    src_path = srcRoot.joinpath(img)
+                    dst_path = dstRoot.joinpath(img)
+                    shutil.copy2(src_path, dst_path)
+                newObj.save(New=newObj,visual=visual)
+                return newObj
+            else:
+                return dst_dict
         
     def correct(self, api_url:Callable, cats:Union[int,str,list], newObj:Optional[CCTools]=None, visual:bool=False):
         if isinstance(cats,list):
@@ -594,6 +687,8 @@ class CCTools(BaseModel):
 
                 # Call API, pass in the temporary file path
                 api_res = api_url(imgpath,bbox)
+                if api_res is None:
+                    api_res = ann['category_id']
                 if api_res not in sys_anns:
                     raise ValueError(f"API returned category ID is not in system categories, please confirm the value is between 1 and {len(sys_anns)}")
                 # Apply API results directly to annotation

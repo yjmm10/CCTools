@@ -24,6 +24,13 @@ def ccdata_data():
         ccdata = json.load(f)
     return CCTools(CCDATA=ccdata)
 
+
+@pytest.fixture
+def validate_diff():
+    return CCTools(ROOT=TEST_ROOT, ANNFILE=Path("instances_diff.json"), IMGDIR=TEST_IMGDIR, ANNDIR=TEST_ANNDIR)
+
+
+
 @pytest.fixture
 def merge_one1():
     return CCTools(ROOT=TEST_ROOT, ANNFILE=Path("instances_one1.json"), IMGDIR=TEST_IMGDIR, ANNDIR=TEST_ANNDIR)
@@ -195,7 +202,16 @@ def test_filter_multi_cond_level_ann(ccdata_file):
 def test_filter_sep_level_img(ccdata_file):
     with tempfile.TemporaryDirectory() as temp_dir:
         newObj = CCTools(ROOT=Path(temp_dir))
+        src_nums = len(ccdata_file.CCDATA.dataset['images'])
+        src_imgs = len(os.listdir(os.path.join(ccdata_file.ROOT,"images")))
+        assert  src_nums == src_imgs
         ccdata_file.filter(imgs=["xx"],cats=["Formula"],newObj=newObj,visual=True,level="img",sep_data=True)
+        filter_nums = len(newObj.CCDATA.dataset['images'])
+        filter_imgs = len(os.listdir(os.path.join(newObj.ROOT,"images")))
+        assert filter_nums == filter_imgs
+        dst_nums = len(ccdata_file.CCDATA.dataset['images'])
+        dst_imgs = len(os.listdir(os.path.join(ccdata_file.ROOT,"images")))
+        assert dst_nums == dst_imgs
         assert newObj.ROOT == Path(temp_dir)
         assert len(newObj.CCDATA.dataset['images']) == 1
         assert len(ccdata_file.CCDATA.dataset['images']) == 1
@@ -243,4 +259,9 @@ def test_split(split_file):
     trainObj,valObj,testObj = split_file.split(ratio=[0.6,0.4],newObj=newObj,by_file=False,visual=True)
     assert len(trainObj.CCDATA.dataset['images']) + len(valObj.CCDATA.dataset['images']) + len(testObj.CCDATA.dataset['images']) <= len(split_file.CCDATA.dataset['images'])
 
-        
+
+
+def test_validate_data(validate_diff):
+    validate_diff._validate_data()
+    assert len(validate_diff.CCDATA.dataset['images']) == 1
+    assert len(validate_diff.CCDATA.dataset['annotations']) == 1

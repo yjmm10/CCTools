@@ -36,6 +36,14 @@ Finally, install the environment and the pre-commit hooks with
 make install
 ```
 
+使用说明
+
+对数据操作的函数，如果传入新数据，则self对象不会改变，如果没有，则返回一个新数据，始终保证原数据不改变
+作用于如下的函数：
+filter,
+merge
+
+
 You are now ready to start development on your project!
 The CI/CD pipeline will be triggered when you open a pull request, merge to main, or when you create a new release.
 

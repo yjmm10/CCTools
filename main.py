@@ -98,46 +98,48 @@ def api_call(imgpath,bbox):
         'file': (os.path.basename(imgpath), open(imgpath, 'rb'), 'image/jpeg')
     }
     table_params = {'trace_id': 'ea01f9c4-5a54-460c-b257-6569774927df'}
+    try:
+        table_response = requests.post(table_url, params=table_params,files=table_files, data=table_data)
 
-    table_response = requests.post(table_url, params=table_params,files=table_files, data=table_data)
-
-    if table_response.status_code == 200:
-        if table_response.json()['return_code'] == 101:
-            # 将路径写入到文件中
-            with open("tmp.txt","w") as f:
-                f.write(imgpath)
-            return 6
-        
-        result = table_response.json()['content'][0]['type']
-        
-        if table_map[result] == 6:
-            image = cv2.imread(imgpath)
-            ann_img = image[bbox[1]:bbox[3], bbox[0]:bbox[2]]
-                
-            # Create a temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
-                temp_path = temp_file.name
-                cv2.imwrite(temp_path, ann_img)
+        if table_response.status_code == 200:
+            if table_response.json()['return_code'] == 101:
+                # 将路径写入到文件中
+                with open("tmp.txt","w") as f:
+                    f.write(imgpath)
+                return 6
             
-                # 准备文件
-                form_files = {
-                    'file': (temp_path, open(temp_path, 'rb'), 'image/jpeg')
-                }
-                # 发送 POST 请求
-                form_response = requests.post(form_url, headers={'accept': 'application/json'}, files=form_files)
-                if form_response.status_code == 200:
-                    result = form_response.json()['label']
-                    if form_map[result] == 10:
-                        return 10
+            result = table_response.json()['content'][0]['type']
+            
+            if table_map[result] == 6:
+                image = cv2.imread(imgpath)
+                ann_img = image[bbox[1]:bbox[3], bbox[0]:bbox[2]]
+                    
+                # Create a temporary file
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
+                    temp_path = temp_file.name
+                    cv2.imwrite(temp_path, ann_img)
+                
+                    # 准备文件
+                    form_files = {
+                        'file': (temp_path, open(temp_path, 'rb'), 'image/jpeg')
+                    }
+                    # 发送 POST 请求
+                    form_response = requests.post(form_url, headers={'accept': 'application/json'}, files=form_files)
+                    if form_response.status_code == 200:
+                        result = form_response.json()['label']
+                        if form_map[result] == 10:
+                            return 10
+                        else:
+                            return 6
                     else:
-                        return 6
-                else:
-                    print("Request failed with status code:", table_response.status_code)
+                        print("Request failed with status code:", table_response.status_code)
+            else:
+                # print(table_map[result])
+                return 9
         else:
-            # print(table_map[result])
-            return 9
-    else:
-        print("Request failed with status code:", table_response.status_code)
+            print("Request failed with status code:", table_response.status_code)
+    except:
+        return None
 
 def one(root):
     visual = False
@@ -148,33 +150,45 @@ def one(root):
     os.makedirs(old_root,exist_ok=True)
     os.makedirs(correct_root,exist_ok=True)
     
-    # ccdata_file = CCTools(ROOT=root)
-    # # 对齐类别
-    # ccdata_file.update_cat(newCat=CATS)
-    # if visual:
-    #     ccdata_file.visual()
+    ccdata_file = CCTools(ROOT=root)
+    # 对齐类别
+    ccdata_file.update_cat(newCat=CATS)
+    if visual:
+        ccdata_file.visual()
     
-    # # 过滤公式以及table标签，保存到NEW目录
-    # newData = ccdata_file.filter(imgs=all_docs,cats=["Table"],newObj=CCTools(ROOT=new_root),mod="or",visual=visual,level="img",sep_data=True)
+    # result = {}
+    # result["原始的数据"] = ccdata_file.static()['total_images']
+    # result["原始的图片"] = len(os.listdir(os.path.join(root,"images")))
     
-    # # 保存分离后的旧数据，保存到OLD目录
-    # ccdata_file.save(New=CCTools(ROOT=old_root),visual=visual)
+    # 过滤公式以及table标签，保存到NEW目录
+    newData = ccdata_file.filter(imgs=all_docs,cats=["Table"],newObj=CCTools(ROOT=new_root),mod="or",visual=visual,level="img",sep_data=True)
+    # 保存分离后的旧数据，保存到OLD目录
+    oldData = CCTools(ROOT=old_root)
+    ccdata_file.save(New=oldData,visual=visual)
+    # result["保留的数据"] = oldData.static()['total_images']
+    # result["保留的图片"] = len(os.listdir(os.path.join(oldData.ROOT,"images")))
+    # result["过滤的数据"] = newData.static()['total_images']
+    # result["过滤的图片"] = len(os.listdir(os.path.join(newData.ROOT,"images")))
     
-    newData = CCTools(ROOT=new_root)
-    newData.correct(api_url=api_call,cats=["Table"],newObj=CCTools(ROOT=correct_root),visual=visual)
+    
+    
+    correctData = newData.correct(api_url=api_call,cats=["Table"],newObj=CCTools(ROOT=correct_root),visual=visual)
+    # result["纠正的数据"] = correctData.static()['total_images']
+    # result["纠正的图片"] = len(os.listdir(os.path.join(correctData.ROOT,"images")))
+    # print(root, result)
+    pass
+
     
 
 
-def filter_to_correct(root="/home/zyj/github/CCTools/竞品/raw"):
+def filter_to_correct(root="竞品/raw"):
     dirlist = os.listdir(root)
     for data_dir in dirlist:
-        # if data_dir in ["含交互式元素的文档",  "含图像的文档",  "含复杂布局和设计的文档",  "含表格和图表的文档",  "国标文件-新",  "教育领域-新"]:
-        #     continue
-        if data_dir in ["含目录的文档"]:
-            if os.path.isdir(os.path.join(root,data_dir)):
-                one(os.path.join(root,data_dir))
+        if os.path.isdir(os.path.join(root,data_dir)):
+            one(os.path.join(root,data_dir))
                 
-def merge(root):
+def merge():
+    root="竞品/test"
     dirlist = os.listdir(root)
     ccdata_files = []
     for data_dir in dirlist:
@@ -183,17 +197,54 @@ def merge(root):
             continue
         ccdata_files.append(CCTools(ROOT=data_path))
     
-    newObj = ccdata_files[0]
-    newObj.merge(newObj=ccdata_files[1:],cat_keep=True)
-    newObj.save(New=CCTools(ROOT=root.replace("raw","MERGE")),visual=False)
     
-            
+    newObj = CCTools(ROOT=root.replace("test","MERGE"))
+    newObj.merge(others=ccdata_files,cat_keep=True,newObj=newObj)
+    newObj.save(New=newObj,visual=True)
+    
+    # srcObj = CCTools(ROOT=root.replace("test","test_MERGE"))
+    # newObj.save(New=srcObj,visual=True)
+    
+    # srcObj = CCTools(ROOT="/home/zyj/github/CCTools/竞品/CORRECT/含图像的文档")
+    # splitObj = CCTools(ROOT="/home/zyj/github/CCTools/竞品/SPILT/含图像的文档")
+    # srcObj.split(ratio=[0.7,0.2,0.1],by_file=True,newObj=splitObj)
+
+
     pass
 
 def split(root):
     pass
     
+def static():
+    root = "竞品"
+    res = []
+    for  dd  in ["raw","CORRECT","OLD"]:
+        temp_root = os.path.join(root,dd)
+        dirlist = os.listdir(temp_root)
+        ccdata_files = {}
+        for data_dir in dirlist:
+            data_dir = os.path.join(temp_root,data_dir)
+            if not os.path.isdir(data_dir):
+                continue
+            try:
+                ccdata = CCTools(ROOT=data_dir)
+                ann_imgs = ccdata.static()['total_images']
+                ann_anns = ccdata.static()['total_annotations']
+                dir_imgs = os.listdir(os.path.join(ccdata.ROOT,"images"))
+                ccdata_files[data_dir] = {'标注图像':ann_imgs,'标注bbox':ann_anns,'目录图像':len(dir_imgs)}
+            except Exception as e:
+                continue
+            
+        res.append(ccdata_files)
+    print(res)
+    
+    
+    
     
 
 if __name__ == "__main__":
-    merge(root="/home/zyj/github/CCTools/竞品/raw")
+    merge()
+    # filter_to_correct()
+    # static()
+    
+    
