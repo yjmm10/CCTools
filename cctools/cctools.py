@@ -6,24 +6,13 @@ import re
 import tempfile
 from typing import Callable, Dict, List, Optional, Union, Any,Tuple
 from pydantic import BaseModel, Field
-from loguru import logger
 import os, json, shutil, copy, cv2
 import matplotlib.pyplot as plt
 
 from .cc import CC
 
+from .logger import logger
 
-# Configure logger
-def setup_logger(log_file=None):
-    logger.remove()  # Remove default handler
-    if log_file:
-        logger.add(log_file, rotation="10 MB")  # Log to file
-    else:
-        logger.add(lambda msg: print(msg, end=""))  # Log to console
-
-# Call this function at the beginning of your script
-# setup_logger("log.txt")  # Uncomment to log to file
-setup_logger()  # Log to console
 
 
 
@@ -53,22 +42,35 @@ class CCTools(BaseModel):
                  CCDATA: Optional[Union[dict, CC]] = None,
                  CP_IMGPATH: Optional[Union[Path, str]] = None,
                  validate_force:bool=True,
+                 CCTOOLS_OBJ:Optional[CCTools]=None,
+                 empty_init:bool=False, # 不创建目录
                  **kwargs):
         """
         初始化 CCTools 对象，确保所有路径输入都被转换为 Path 对象。
-        1. 
+        优先顺序，CCDATA > ANNPATH > CCTOOLS_OBJ
         """
         super().__init__(**kwargs)
-        self.ROOT = Path(ROOT or self.ROOT)
-        self.ANNDIR = Path(ANNDIR or self.ANNDIR)
-        self.IMGDIR = Path(IMGDIR or self.IMGDIR)
-        self.ANNFILE = Path(ANNFILE or self.ANNFILE)
-        self.VISUALDIR = Path(VISUALDIR or self.VISUALDIR)
-        self.CP_IMGPATH = Path(CP_IMGPATH or self.ROOT.joinpath(self.IMGDIR))
+        # 根据已有进行创建
+        if CCTOOLS_OBJ:
+            self.ROOT = Path(ROOT or CCTOOLS_OBJ.ROOT)
+            self.ANNDIR = Path(ANNDIR or CCTOOLS_OBJ.ANNDIR)
+            self.IMGDIR = Path(IMGDIR or CCTOOLS_OBJ.IMGDIR)
+            self.ANNFILE = Path(ANNFILE or CCTOOLS_OBJ.ANNFILE)
+            self.VISUALDIR = Path(VISUALDIR or CCTOOLS_OBJ.VISUALDIR)
+            self.CP_IMGPATH = Path(CP_IMGPATH or CCTOOLS_OBJ.CP_IMGPATH)
+        else:    
+            self.ROOT = Path(ROOT or self.ROOT)
+            self.ANNDIR = Path(ANNDIR or self.ANNDIR)
+            self.IMGDIR = Path(IMGDIR or self.IMGDIR)
+            self.ANNFILE = Path(ANNFILE or self.ANNFILE)
+            self.VISUALDIR = Path(VISUALDIR or self.VISUALDIR)
+            self.CP_IMGPATH = Path(CP_IMGPATH or self.ROOT.joinpath(self.IMGDIR))
+        
         
         annPath = self.ROOT.joinpath(self.ANNDIR).joinpath(self.ANNFILE)
         
         exist_data = True
+        
         if CCDATA:
             if isinstance(CCDATA, dict):
                 self._CCDATA(CCDATA)
@@ -86,11 +88,12 @@ class CCTools(BaseModel):
         # 检查路径系统完整路径
         self._checkpath()
         # 创建目录
-        self._mkCCDIR(self.IMGDIR)
+        if not empty_init:
+            self._mkCCDIR(self.IMGDIR)
         
         # Validate data if image directory contains files and validate_force is True
         img_dir = self.ROOT.joinpath(self.IMGDIR)
-        if img_dir.exists() and len(list(img_dir.iterdir())) > 0 and self.validate_force:
+        if img_dir.exists() and len(list(img_dir.iterdir())) > 0 and validate_force and self.CCDATA:
             logger.info(f"Found images in directory {img_dir}, starting data validation...")
             self._validate_data()
             logger.info("Data validation completed")
@@ -176,6 +179,8 @@ class CCTools(BaseModel):
             raise ValueError(f"Invalid variable: {Var}")
 
     def _mkCCDIR(self,DIR:Optional[Union[str,Path]],VISUALDIR:Optional[bool]=None)->None:
+        if self.ROOT == Path("."):
+            pass
         """创建目录"""
         self.ROOT.mkdir(parents=True,exist_ok=True)
         self.ROOT.joinpath(DIR).mkdir(parents=True,exist_ok=True)
@@ -186,7 +191,9 @@ class CCTools(BaseModel):
             self.ROOT.joinpath(self.VISUALDIR).mkdir(parents=True,exist_ok=True) 
         
     def _get_cat(self,cat:Union[int,str],force_int:bool=False):
-        """获取类别信息, 用来判断类别是否存在"""
+        """获取类别信息, 用来判断类别是否存在
+        force_int: 强制返回int类型
+        """
         if isinstance(cat,int):
             if force_int:
                 return True, cat
@@ -264,35 +271,63 @@ class CCTools(BaseModel):
             plt.close()
         logger.info(f"Visualization completed. Output saved to {self.ROOT.joinpath(self.VISUALDIR)}")
         
-    def save(self,New:CCTools,visual:bool=True,overwrite:bool=True): 
-        # 自己保存自己，存在数据无法保存问题
+    def save(self,New:CCTools=None,visual:bool=True,overwrite:bool=True): 
+        """
+        Args:
+            New (CCTools, optional): _description_. Defaults to None.
+            visual (bool, optional): _description_. Defaults to True.
+            overwrite (bool, optional): _description_. Defaults to True.
+        """
         assert self.CCDATA, logger.error("CCDATA is None")
+        # 检查CP_IMGPATH是否存在图片
+        if self.CP_IMGPATH:
+            for img in self.CCDATA.dataset['images']:
+                img_path = self.CP_IMGPATH.joinpath(img['file_name'])
+                if not img_path.exists():
+                    logger.error(f"Image not found in CP_IMGPATH: {img_path}")
+                    raise FileNotFoundError(f"Image not found in CP_IMGPATH: {img_path}")
         
-        CCDIT = self._DICT()
-
-        src_annFile,src_root,src_annDir,src_imgDir = self.ANNFILE,self.ROOT,self.ANNDIR,self.IMGDIR
-        if New.ANNFILE is None:
-            dst_annFile,dst_root,dst_annDir,dst_imgDir = src_annFile,src_root,src_annDir,src_imgDir
+        # 自己保存
+        if not New:
+            # 自己保存自己，存在数据无法保存问题
+            self._cp_img()
+            with open(self.ROOT.joinpath(self.ANNDIR).joinpath(self.ANNFILE), 'w', encoding='utf-8') as json_file:
+                json.dump(self._DICT(), json_file, ensure_ascii=False, indent=2)  # Use indent parameter to beautify output
+        
+            self.visual(overwrite=overwrite) if visual else None
         else:
-            dst_annFile,dst_root,dst_annDir,dst_imgDir = New.ANNFILE,New.ROOT,New.ANNDIR,New.IMGDIR
+            New.CP_IMGPATH = self.ROOT.joinpath(self.IMGDIR)
+            New.CCDATA = self.CCDATA
+            with open(New.ROOT.joinpath(New.ANNDIR).joinpath(New.ANNFILE), 'w', encoding='utf-8') as json_file:
+                json.dump(self._DICT(), json_file, ensure_ascii=False, indent=2)  # Use indent parameter to beautify output
+            New._cp_img()
+            New.visual(overwrite=overwrite) if visual else None
+
+
+        # # 原始，必须包含New的版本
+        # src_annFile,src_root,src_annDir,src_imgDir = self.ANNFILE,self.ROOT,self.ANNDIR,self.IMGDIR
+        # if New.ANNFILE is None:
+        #     dst_annFile,dst_root,dst_annDir,dst_imgDir = src_annFile,src_root,src_annDir,src_imgDir
+        # else:
+        #     dst_annFile,dst_root,dst_annDir,dst_imgDir = New.ANNFILE,New.ROOT,New.ANNDIR,New.IMGDIR
         
-        with open(dst_root.joinpath(dst_annDir).joinpath(dst_annFile), 'w', encoding='utf-8') as json_file:
-            json.dump(CCDIT, json_file, ensure_ascii=False, indent=2)  # Use indent parameter to beautify output
+        # with open(dst_root.joinpath(dst_annDir).joinpath(dst_annFile), 'w', encoding='utf-8') as json_file:
+        #     json.dump(CCDIT, json_file, ensure_ascii=False, indent=2)  # Use indent parameter to beautify output
         
-        # 图片处理
-         # Copy images to new path
-        for img in CCDIT['images']:
-            src_path = src_root.joinpath(src_imgDir,img['file_name'])
-            dst_path = dst_root.joinpath(dst_imgDir,img['file_name'])
+        # # 图片处理
+        # # Copy images to new path
+        # for img in CCDIT['images']:
+        #     src_path = src_root.joinpath(src_imgDir,img['file_name'])
+        #     dst_path = dst_root.joinpath(dst_imgDir,img['file_name'])
             
-            # if overwrite and dst_path.exists():
-            #     os.remove(dst_path)
-            if not dst_path.exists():
-                shutil.copy2(src_path, dst_path)
-        New.CCDATA = self.CCDATA
-        # 保存
-        if visual:
-            New.visual(overwrite=overwrite)
+        #     # if overwrite and dst_path.exists():
+        #     #     os.remove(dst_path)
+        #     if not dst_path.exists():
+        #         shutil.copy2(src_path, dst_path)
+        # New.CCDATA = self.CCDATA
+        # # 保存
+        # if visual:
+        #     New.visual(overwrite=overwrite)
         
     def static(self)->Dict:
         """统计数据"""
@@ -609,13 +644,24 @@ class CCTools(BaseModel):
      
     def filter(self, cats: Optional[List[Union[int,str]]] = [], imgs: Optional[List[Union[int,str]]] = [], annIds: Optional[List[int]] = [], mod:Optional[str]="and", newObj:Optional[CCTools]=None,visual:bool=False,alignCat:bool=True,sep_data:bool=False,level="img")->Union[dict,CCTools]:
         """
-        过滤数据集,图像支持模糊搜索，类别支持id或名称搜索，标签为过滤的结果，设置alignCat对齐类别结果
-        mod: 过滤方式, "and": 同时满足, "or": 满足单个的所有并集
-        level: 过滤结果的级别, "img": 图片, "ann": 标签，即过滤后的标注数量
-        sep_data: 是否分离数据，即是否返回新的CCTools对象
-        alignCat: 对齐类别，bool: True, 对齐self, Dict: 对齐指定的类别
-        
-        return: 如果设置了newObj,则返回新的CCTools对象，否则返回过滤后的dict数据集
+        过滤数据集,支持多种过滤方式:
+        - 图像: 支持id或文件名模糊搜索
+        - 类别: 支持id或名称搜索
+        - 标注: 支持标注id过滤
+
+        Args:
+            cats (List[Union[int,str]], optional): 类别id或名称列表. Defaults to [].
+            imgs (List[Union[int,str]], optional): 图像id或文件名列表. Defaults to [].
+            annIds (List[int], optional): 标注id列表. Defaults to [].
+            mod (str, optional): 过滤方式. "and"表示同时满足所有条件, "or"表示满足任一条件. Defaults to "and".
+            newObj (CCTools, optional): 新的CCTools对象,用于保存过滤结果. Defaults to None. 存在时，会自动保存完整对象
+            visual (bool, optional): 是否可视化. Defaults to False.
+            alignCat (Union[bool,dict], optional): 类别对齐方式. True表示与self对齐,dict表示与指定类别对齐. Defaults to True.
+            sep_data (bool, optional): 是否分离数据. True表示返回新的CCTools对象,False表示返回过滤后的数据. Defaults to False.
+            level (str, optional): 过滤结果级别. "img"表示按图片过滤,"ann"表示按标注过滤. Defaults to "img".
+
+        Returns:
+            Union[dict,CCTools]: 如果设置了newObj则返回新的CCTools对象,否则返回self对象
         """
         # 获取id
         imgIds = [self._get_img(img,force_int=True)[1] for img in imgs if self._get_img(img,force_int=True)[0]]
@@ -635,34 +681,26 @@ class CCTools(BaseModel):
 
             if newObj:
                 newObj._CCDATA(dst_dict)
-                imglist = newObj._get_imglist()
-                srcRoot = self.ROOT.joinpath(self.IMGDIR)
-                dstRoot = newObj.ROOT.joinpath(newObj.IMGDIR)
-                for img in imglist:
-                    src_path = srcRoot.joinpath(img)
-                    dst_path = dstRoot.joinpath(img)
-                    shutil.copy2(src_path, dst_path)
-                newObj.save(New=newObj,visual=visual)
-                if sep_dict:
-                    self._CCDATA(sep_dict)  
+                newObj.CP_IMGPATH = self.ROOT.joinpath(self.IMGDIR)
+                newObj._cp_img()
+                newObj.save(visual=visual)
+                # 分离原始数据
+                self._CCDATA(sep_dict)  
                 return newObj
             else:
                 self._CCDATA(sep_dict)  
+                return self
         # 保留 = 原始，过滤<原始，只保留过滤
         else:
             if newObj:
                 newObj._CCDATA(dst_dict)
-                imglist = newObj._get_imglist()
-                srcRoot = self.ROOT.joinpath(self.IMGDIR)
-                dstRoot = newObj.ROOT.joinpath(newObj.IMGDIR)
-                for img in imglist:
-                    src_path = srcRoot.joinpath(img)
-                    dst_path = dstRoot.joinpath(img)
-                    shutil.copy2(src_path, dst_path)
-                newObj.save(New=newObj,visual=visual)
+                newObj.CP_IMGPATH = self.ROOT.joinpath(self.IMGDIR)
+                newObj._cp_img()
+                newObj.save(visual=visual)
                 return newObj
             else:
-                return dst_dict
+                return self
+
         
     def correct(self, api_url:Callable, cats:Union[int,str,list], newObj:Optional[CCTools]=None, visual:bool=False):
         if isinstance(cats,list):
@@ -716,11 +754,21 @@ class CCTools(BaseModel):
         else:
             self.CCDATA=newCC
             
-    def split(self,ratio:List[float]=[0.7,0.2,0.1],by_file=False,newObj:Optional[CCTools]=None,visual:bool=False)->Union[Tuple[CCTools,CCTools,CCTools],Tuple[dict,dict,dict]]:
+    def split(self,ratio:List[float]=[0.7,0.2,0.1],by_file=False,newObj:Optional[CCTools]=None,visual:bool=False,merge:bool=True)->Union[Tuple[CCTools,CCTools,CCTools],Tuple[dict,dict,dict]]:
         """
-        ratio:划分比例，按照训练集、验证集、测试集顺序
-        by_file:是否按照文件划分
+        将数据集按照指定比例划分为训练集、验证集和测试集
 
+        Args:
+            ratio (List[float]): 数据集划分比例，按照[训练集,验证集,测试集]顺序,默认[0.7,0.2,0.1]
+            by_file (bool): 是否按照PDF文件名进行划分,True则同一PDF的页面会被分到同一数据集,False则完全随机划分
+            newObj (Optional[CCTools]): 新的CCTools对象,用于保存划分后的数据集,实际只有ROOT有用，其他参数无效
+            visual (bool): 是否可视化显示划分结果，同时会保存数据
+            merge (bool): 是否将划分后的图像合并到同一文件夹下
+
+        Returns:
+            Union[Tuple[CCTools,CCTools,CCTools],Tuple[dict,dict,dict]]: 
+            如果merge=True,返回三个CCTools对象,分别对应训练集、验证集、测试集
+            如果merge=False,返回三个字典,包含各自数据集的图像信息
         """
         if len(ratio)==2:
             ratio.append(1-sum(ratio))
@@ -780,46 +828,85 @@ class CCTools(BaseModel):
         val_dict = self._gen_dict(catIds=val_catIds,imgIds=val_imgIds,annIds=val_annIds)
         test_dict = self._gen_dict(catIds=test_catIds,imgIds=test_imgIds,annIds=test_annIds)
         
+        # 制作新的对象
+        srcRoot = self.ROOT.joinpath(self.IMGDIR)
+        # 使用self的目录
+        
         if newObj:
-            srcRoot = self.ROOT.joinpath(self.IMGDIR)
-            
-            trainObj = copy.deepcopy(newObj)
-
-            
-            trainObj._CCDATA(train_dict)
-            trainObj.ANNFILE = Path("instances_Train.json")
-            train_imglist = trainObj._get_imglist()
-            dstRoot = newObj.ROOT.joinpath(newObj.IMGDIR)
-            for img in train_imglist:
-                src_path = srcRoot.joinpath(img)
-                dst_path = dstRoot.joinpath(img)
-                shutil.copy2(src_path, dst_path)
-            trainObj.save(New=trainObj,visual=visual)
-            
-            
-            
-            valObj = copy.deepcopy(newObj)
-            valObj._CCDATA(val_dict)
-            valObj.ANNFILE = Path("instances_Val.json")
-            val_imglist = valObj._get_imglist()
-            for img in val_imglist:
-                src_path = srcRoot.joinpath(img)
-                dst_path = dstRoot.joinpath(img)
-                shutil.copy2(src_path, dst_path)
-            valObj.save(New=valObj,visual=visual)
-            
-            
-            testObj = copy.deepcopy(newObj)
-            testObj._CCDATA(test_dict)
-            testObj.ANNFILE = Path("instances_Test.json")
-            test_imglist = testObj._get_imglist()
-            for img in test_imglist:
-                src_path = srcRoot.joinpath(img)
-                dst_path = dstRoot.joinpath(img)
-                shutil.copy2(src_path, dst_path)
-            testObj.save(New=testObj,visual=visual)
-            
-
-            return trainObj,valObj,testObj
+            trainObj = CCTools(CCTOOLS_OBJ=newObj,IMGDIR=self.IMGDIR if merge else "Train",ANNFILE="instances_Train.json",CP_IMGPATH=srcRoot)
+            valObj = CCTools(CCTOOLS_OBJ=newObj,IMGDIR=self.IMGDIR if merge else "Val",ANNFILE="instances_Val.json",CP_IMGPATH=srcRoot)
+            testObj = CCTools(CCTOOLS_OBJ=newObj,IMGDIR=self.IMGDIR if merge else "Test",ANNFILE="instances_Test.json",CP_IMGPATH=srcRoot)
         else:
-            return train_dict,val_dict,test_dict
+            trainObj = CCTools(CCTOOLS_OBJ=self,IMGDIR=self.IMGDIR if merge else "Train",ANNFILE="instances_Train.json",CP_IMGPATH=srcRoot)
+            valObj = CCTools(CCTOOLS_OBJ=self,IMGDIR=self.IMGDIR if merge else "Val",ANNFILE="instances_Val.json",CP_IMGPATH=srcRoot)
+            testObj = CCTools(CCTOOLS_OBJ=self,IMGDIR=self.IMGDIR if merge else "Test",ANNFILE="instances_Test.json",CP_IMGPATH=srcRoot)
+        
+        
+        trainObj._CCDATA(train_dict)
+        valObj._CCDATA(val_dict)
+        testObj._CCDATA(test_dict)
+        
+        trainObj.save(visual=visual)
+        valObj.save(visual=visual)
+        testObj.save(visual=visual)
+        return trainObj,valObj,testObj
+        
+        
+        # if newObj:
+        #     srcRoot = self.ROOT.joinpath(self.IMGDIR)
+            
+        #     trainObj = copy.deepcopy(newObj)
+
+            
+        #     trainObj._CCDATA(train_dict)
+        #     trainObj.ANNFILE = Path("instances_Train.json")
+        #     train_imglist = trainObj._get_imglist()
+            
+        #     dstRoot = newObj.ROOT.joinpath(newObj.IMGDIR)
+            
+        #     if not merge:
+        #         dstRoot = newObj.ROOT.joinpath("Train")
+            
+        #     for img in train_imglist:
+        #         src_path = srcRoot.joinpath(img)
+        #         dst_path = dstRoot.joinpath(img)
+        #         shutil.copy2(src_path, dst_path)
+        #     trainObj.save(New=trainObj,visual=visual)
+            
+            
+            
+        #     valObj = copy.deepcopy(newObj)
+        #     valObj._CCDATA(val_dict)
+        #     valObj.ANNFILE = Path("instances_Val.json")
+        #     val_imglist = valObj._get_imglist()
+            
+        #     if not merge:
+        #         dstRoot = newObj.ROOT.joinpath("Val")
+            
+        #     for img in val_imglist:
+        #         src_path = srcRoot.joinpath(img)
+        #         dst_path = dstRoot.joinpath(img)
+        #         shutil.copy2(src_path, dst_path)
+        #     valObj.save(New=valObj,visual=visual)
+            
+            
+        #     testObj = copy.deepcopy(newObj)
+        #     testObj._CCDATA(test_dict)
+        #     testObj.ANNFILE = Path("instances_Test.json")
+        #     test_imglist = testObj._get_imglist()
+            
+        #     if not merge:
+        #         dstRoot = newObj.ROOT.joinpath("Test")
+            
+            
+            
+        #     for img in test_imglist:
+        #         src_path = srcRoot.joinpath(img)
+        #         dst_path = dstRoot.joinpath(img)
+        #         shutil.copy2(src_path, dst_path)
+        #     testObj.save(New=testObj,visual=visual)
+            
+
+        #     return trainObj,valObj,testObj
+        # else:
+        #     return train_dict,val_dict,test_dict

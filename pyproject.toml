@@ -17,6 +17,7 @@ pycocotools = "^2.0.8"
 loguru = "^0.7.2"
 pydantic = "^2.9.2"
 opencv-python = "^4.10.0.84"
+openpyxl = "^3.1.5"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.2.0"

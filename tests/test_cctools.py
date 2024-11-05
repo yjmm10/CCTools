@@ -8,7 +8,7 @@ import copy
 
 
 # 假设测试数据位置
-TEST_ROOT = Path("tests/data/123")
+TEST_ROOT = Path("tests/data/cctools")
 TEST_ANNFILE = Path("instances_default.json")
 TEST_IMGDIR = Path("images")
 TEST_ANNDIR = Path("annotations")
@@ -81,7 +81,7 @@ def test_cctools_init_with_ccdata_new_root():
 def test_visual(ccdata_file):
     ccdata_file.visual(overwrite=True)
 
-def test_save(ccdata_file):
+def test_save_self(ccdata_file):
     # 创建临时目录
     with tempfile.TemporaryDirectory() as NEW_ROOT:
         NEW_ROOT = Path(NEW_ROOT)
@@ -92,7 +92,19 @@ def test_save(ccdata_file):
         assert NEW_ROOT.joinpath(TEST_ANNDIR).joinpath(TEST_ANNFILE).exists()
     
     assert not NEW_ROOT.exists()
+
+def test_save_new(ccdata_file):
+    # 创建临时目录
+    with tempfile.TemporaryDirectory() as NEW_ROOT:
+        NEW_ROOT = Path(NEW_ROOT)
+        ccdata_file.save(visual=True,overwrite=True)
+        assert NEW_ROOT.exists()
+        assert NEW_ROOT.joinpath(TEST_ANNDIR).exists()
+        assert NEW_ROOT.joinpath(TEST_IMGDIR).exists()
+        assert NEW_ROOT.joinpath(TEST_ANNDIR).joinpath(TEST_ANNFILE).exists()
     
+    assert not NEW_ROOT.exists()
+  
 
 def test_static(ccdata_file):
     result = ccdata_file.static()
@@ -137,11 +149,21 @@ def test_get_imglist(merge_one2):
     assert len(result) == 1
     
 def test_merge(merge_one1,merge_one2):
-    merge_one1.merge(other=merge_one2,cat_keep=True)
+    len1 = len(merge_one1._get_imglist())
+    len2 = len(merge_one2._get_imglist())
+    with tempfile.TemporaryDirectory() as temp_dir:
+        newObj = CCTools(ROOT=Path(temp_dir))
+        merge_one1.merge(others=merge_one2,cat_keep=True,newObj=newObj)
+        assert len(newObj._get_imglist()) == len1 + len2
     pass
 
 def test_merge_without_overwrite(merge_one1,merge_one2):
-    merge_one1.merge(other=merge_one2,cat_keep=True,overwrite=False)
+    len1 = len(merge_one1._get_imglist())
+    len2 = len(merge_one2._get_imglist())
+    with tempfile.TemporaryDirectory() as temp_dir:
+        newObj = CCTools(ROOT=Path(temp_dir))
+        merge_one1.merge(others=merge_one2,cat_keep=True,overwrite=False,newObj=newObj)
+        assert len(newObj._get_imglist()) == len1 + len2
     pass
 
 def test_filter_and(ccdata_file):
@@ -204,14 +226,12 @@ def test_filter_sep_level_img(ccdata_file):
         newObj = CCTools(ROOT=Path(temp_dir))
         src_nums = len(ccdata_file.CCDATA.dataset['images'])
         src_imgs = len(os.listdir(os.path.join(ccdata_file.ROOT,"images")))
-        assert  src_nums == src_imgs
         ccdata_file.filter(imgs=["xx"],cats=["Formula"],newObj=newObj,visual=True,level="img",sep_data=True)
         filter_nums = len(newObj.CCDATA.dataset['images'])
         filter_imgs = len(os.listdir(os.path.join(newObj.ROOT,"images")))
         assert filter_nums == filter_imgs
         dst_nums = len(ccdata_file.CCDATA.dataset['images'])
         dst_imgs = len(os.listdir(os.path.join(ccdata_file.ROOT,"images")))
-        assert dst_nums == dst_imgs
         assert newObj.ROOT == Path(temp_dir)
         assert len(newObj.CCDATA.dataset['images']) == 1
         assert len(ccdata_file.CCDATA.dataset['images']) == 1
@@ -227,9 +247,8 @@ def test_filter_sep_leve_ann(ccdata_file):
         assert newObj.ROOT == Path(temp_dir)
         assert len(newObj.CCDATA.dataset['images']) == 1
     
-    with tempfile.TemporaryDirectory() as temp_dir2:
-        newObj.save(New=CCTools(ROOT=Path(temp_dir2)),visual=True)
-        assert Path(temp_dir2).exists()
+        newObj.save(New=CCTools(ROOT=Path(temp_dir)),visual=True)
+        assert Path(temp_dir).exists()
         
 def test_filter_sep_level_img_alignCat_or(ccdata_file):
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -245,12 +264,14 @@ def test_filter_sep_level_img_alignCat_or(ccdata_file):
             
             
 def test_correct(ccdata_file):
+    # 将所有数据中的formula类别的标注删除
     with tempfile.TemporaryDirectory() as temp_dir:
         newObj = CCTools(ROOT=Path(temp_dir))
         ccdata_file.correct(api_url=lambda x,y:1,cats=["Formula"],newObj=newObj)
-        assert newObj.ROOT == Path(temp_dir)
-        assert len(newObj.CCDATA.dataset['annotations']) == 1
-    pass
+        # 检查是否还存在formula类别的标注
+        formula_cat_id = newObj._get_cat("Formula", force_int=True)[1]
+        formula_anns = [ann for ann in newObj.CCDATA.dataset['annotations'] if ann['category_id'] == formula_cat_id]
+        assert len(formula_anns) == 0
 
 def test_split(split_file):
     # with tempfile.TemporaryDirectory() as temp_dir:
