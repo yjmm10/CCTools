@@ -14,7 +14,9 @@ class Pipeline:
                                      'ratio':[0.7,0.2,0.1],
                                      'by_file':False,
                                      'visual':False,
-                                     'newObj':None}
+                                     'newObj':None,
+                                     'overwrite':False,
+                                     'yolopath':None}
                    ):
         """
         固定划分数据集，根据缓存来处理
@@ -26,7 +28,8 @@ class Pipeline:
         by_file = config.get('by_file',False)
         visual = config.get('visual',False)
         newObj = config.get('newObj',None)
-        
+        overwrite = config.get('overwrite',False)
+        yolopath = config.get('yolopath',None)
 
         
         assert cctools, logger.error("CCTools is None")      
@@ -42,26 +45,34 @@ class Pipeline:
         logger.info(f"Cache file: {cache_file}")
         
         # 检查缓存文件是否存在
-        if cache_file.exists():
+        if cache_file.exists() and not overwrite:
             logger.info(f"Found cache file: {cache_file}")
-            with open(cache_file, "r") as f:
+            with open(cache_file, "r", encoding='utf-8') as f:
                 cache_data = json.load(f)
                 
             # 对缓存进行处理
             # 1. 获取缓存对应的文件信息
             # 2. 划分数据集
             # 3. 保存为json文件
-            trainObj = CCTools(CCTOOLS_OBJ=newObj,IMGDIR="Train",ANNFILE="instances_Train.json")
-            cctools.filter(imgs=cache_data["train"],newObj=trainObj,visual=visual,mod="and",alignCat=True,sep_data=False,level="img")
-            trainObj.save(visual=visual)
-
-            valObj = CCTools(CCTOOLS_OBJ=newObj,IMGDIR="Val",ANNFILE="instances_Val.json")  
-            cctools.filter(imgs=cache_data["val"],newObj=valObj,visual=visual,mod="and",alignCat=True,sep_data=False,level="img")
-            valObj.save(visual=visual)
-            
-            testObj = CCTools(CCTOOLS_OBJ=newObj,IMGDIR="Test",ANNFILE="instances_Test.json")
-            cctools.filter(imgs=cache_data["test"],newObj=testObj,visual=visual,mod="and",alignCat=True,sep_data=False,level="img")
-            testObj.save(visual=visual)
+            # 遍历三个数据集进行处理
+            for MOD in ["Train", "Val", "Test"]:
+                obj = CCTools(CCTOOLS_OBJ=newObj,
+                            IMGDIR=MOD,
+                            ANNFILE=f"instances_{MOD}.json",
+                            CP_IMGPATH=cctools.ROOT.joinpath(cctools.IMGDIR),
+                            YOLOPATH=Path(str(yolopath)+f"_{MOD}"))
+                
+                cctools.filter(imgs=cache_data[MOD],
+                             newObj=obj,
+                             visual=visual,
+                             mod="and",
+                             alignCat=True,
+                             sep_data=False,
+                             level="img")
+                if yolopath:
+                    obj.save(visual=visual,yolo=True)
+                else:
+                    obj.save(visual=visual)
             
                 
         else:
@@ -73,45 +84,58 @@ class Pipeline:
             
             trainObj,valObj,testObj = cctools.split(ratio=ratio,newObj=newObj,by_file=by_file,visual=visual,merge=False)
             # visual存在时会自动保存数据
-            if not visual:
+            
+            if yolopath:
+                trainObj.save(visual=visual,yolo=True)
+                valObj.save(visual=visual,yolo=True)
+                testObj.save(visual=visual,yolo=True)
+            else:
                 trainObj.save(visual=visual)
                 valObj.save(visual=visual)
                 testObj.save(visual=visual)
-            
             
             train_img = trainObj._get_imglist()
             val_img = valObj._get_imglist()
             test_img = testObj._get_imglist()
             
             cache_data = {
-                "train":train_img,
-                "val":val_img,
-                "test":test_img
+                "Train":train_img,
+                "Val":val_img,
+                "Test":test_img
             }
             Path(cache_path).mkdir(parents=True,exist_ok=True)
-            with open(cache_file, "w") as f:
-                json.dump(cache_data, f)
+            with open(cache_file, "w", encoding='utf-8') as f:
+                json.dump(cache_data, f, ensure_ascii=False)
             
             logger.info(f"Save cache file: {cache_file}")
             
     
-    def static_data(self,root,static_file="static.csv"):
+    def static_data(self,root,static_file="static.xlsx",target_dirs=["images", "annotations", "Train", "Test","Val"],
+                    data_match = {"instances_default.json":"images",
+                      "instances_Train.json":"Train", 
+                      "instances_Val.json":"Val",
+                      "instances_Test.json":"Test"}):
         """
-        判断目录下是否存在特定结构,存在则获取该结构所在目录
+        统计目录下所有数据集的数据分布情况
         
         Args:
-            root: 根目录路径
+            root (Union[str,Path]): 根目录路径
+            static_file (str): 统计结果保存文件名,默认为static.xlsx
+            target_dirs (List[str]): 目标目录列表,默认为["images", "annotations", "Train", "Test","Val"]
+            data_match (Dict[str,str]): 标注文件与图片目录的对应关系,一一对应，默认为{"instances_default.json":"images",
+                                                                      "instances_Train.json":"Train", 
+                                                                      "instances_Val.json":"Val",
+                                                                      "instances_Test.json":"Test"}
             
         Returns:
-            list: 包含特定结构的目录列表
+            Tuple[Dict,Dict]: 
+                - Dict: 每个数据集的统计结果
+                - Dict: 所有数据集的总体统计结果
         """
         root = Path(root)
-        target_dirs = ["images", "annotations", "Train", "Test","Val"]
-        # 图片目录对应的标注文件，仅支持一一对应
-        data_match = {"images":"instances_default.json",
-                      "Train":"instances_Train.json",
-                      "Val":"instances_Val.json",
-                      "Test":"instances_Test.json"}
+    
+
+
         result = []
         # 遍历根目录下所有子目录,查找所有的coco目录
         for path in root.rglob("*"):
@@ -128,16 +152,14 @@ class Pipeline:
             coco_root = Path(coco_dir)
             IMGDIR,ANNFILE = None,None
             for k,v in data_match.items():
-                if coco_root.joinpath(k).exists() and coco_root.joinpath("annotations",v).exists():
-                    IMGDIR,ANNFILE = k,v
+                if coco_root.joinpath(v).exists() and coco_root.joinpath("annotations",k).exists():
+                    IMGDIR,ANNFILE = v,k
 
-            CCTOOLS_OBJ = CCTools(ROOT=coco_root,IMGDIR=IMGDIR,ANNFILE=ANNFILE)
-            result = CCTOOLS_OBJ.static()
-            result.pop("images_without_annotations")
-            result.pop("imgId_without_annotations")
-            logger.info(f"Static result: {coco_dir}, result: {result}")
-            
-            all_result[coco_root.stem+f"--{ANNFILE.split('.')[0]}"] = result
+                    CCTOOLS_OBJ = CCTools(ROOT=coco_root,IMGDIR=IMGDIR,ANNFILE=ANNFILE)
+                    result = CCTOOLS_OBJ.static()
+                    result.pop("images_without_annotations")
+                    result.pop("imgId_without_annotations")
+                    all_result[coco_root.stem+f"--{ANNFILE.split('.')[0]}"] = result
             
         # 统计所有数据集的总数
         total_stats = {
@@ -165,14 +187,12 @@ class Pipeline:
         
         # 添加总统计结果到all_result
         all_result['total'] = total_stats
-        
-        logger.info(f"Total statistics: {total_stats}")
-        
+                
         # 创建Excel文件保存统计结果
         import pandas as pd
         
         # 创建一个Excel writer对象
-        with pd.ExcelWriter('static_file.xlsx') as writer:
+        with pd.ExcelWriter(static_file) as writer:
             # Sheet1: 总体统计
             total_rows = []
             # 添加总体统计行
@@ -232,6 +252,8 @@ class Pipeline:
             image_df.to_excel(writer, sheet_name='图片标注统计', index=False)
         
         return all_result,total_stats
+
+
 
         
     

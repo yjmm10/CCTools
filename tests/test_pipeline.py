@@ -21,7 +21,7 @@ TEST_IMGDIR = Path("Test")
 def ccdata_file():
     return CCTools(ROOT=ROOT, ANNFILE=ANNFILE, IMGDIR=IMGDIR, ANNDIR=ANNDIR)
 
-def test_split_data(ccdata_file,ccdata_new):
+def test_split_data(ccdata_file):
     # by_file=False
     with tempfile.TemporaryDirectory() as NEW_ROOT:
         empty_data = CCTools(ROOT=NEW_ROOT, ANNFILE=ANNFILE, IMGDIR=IMGDIR, ANNDIR=ANNDIR,empty_init=True)
@@ -76,7 +76,7 @@ def test_split_data(ccdata_file,ccdata_new):
 
 def test_static():
     pipeline = Pipeline()
-    result,stats = pipeline.static_data(ROOT.parent)
+    result,stats = pipeline.static_data(ROOT.parent,target_dirs=["annotations","images"],data_match={"instances_default_1.json":"images","instances_default.json":"images","instances_default.json":"images"})
     assert result is not None
     assert stats is not None
 

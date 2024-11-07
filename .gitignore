@@ -168,3 +168,4 @@ cython_debug/
 
 idp_q4/
 split_test/
+*.cache

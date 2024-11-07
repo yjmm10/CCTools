@@ -5,6 +5,7 @@ import random
 import re
 import tempfile
 from typing import Callable, Dict, List, Optional, Union, Any,Tuple
+import numpy as np
 from pydantic import BaseModel, Field
 import os, json, shutil, copy, cv2
 import matplotlib.pyplot as plt
@@ -28,6 +29,9 @@ class CCTools(BaseModel):
     VISUALDIR: Optional[Path] = Path("visual")
     CCDATA: Optional[Union[dict,CC]]=None
     CP_IMGPATH: Optional[Union[Path,str]] = None
+    YOLODATA: Optional[dict] = None
+    YOLOPATH: Optional[Path] = Path("yolo")
+    YOLO_id2cls: Optional[dict] = None
     
     model_config = {
         "arbitrary_types_allowed": True
@@ -43,6 +47,7 @@ class CCTools(BaseModel):
                  CP_IMGPATH: Optional[Union[Path, str]] = None,
                  validate_force:bool=True,
                  CCTOOLS_OBJ:Optional[CCTools]=None,
+                 YOLOPATH:Optional[Union[Path,str]]=None, # 默认在ROOT/yolo，指定需完整路径
                  empty_init:bool=False, # 不创建目录
                  **kwargs):
         """
@@ -58,6 +63,7 @@ class CCTools(BaseModel):
             self.ANNFILE = Path(ANNFILE or CCTOOLS_OBJ.ANNFILE)
             self.VISUALDIR = Path(VISUALDIR or CCTOOLS_OBJ.VISUALDIR)
             self.CP_IMGPATH = Path(CP_IMGPATH or CCTOOLS_OBJ.CP_IMGPATH)
+            self.YOLOPATH = Path(YOLOPATH or CCTOOLS_OBJ.YOLOPATH)
         else:    
             self.ROOT = Path(ROOT or self.ROOT)
             self.ANNDIR = Path(ANNDIR or self.ANNDIR)
@@ -65,7 +71,7 @@ class CCTools(BaseModel):
             self.ANNFILE = Path(ANNFILE or self.ANNFILE)
             self.VISUALDIR = Path(VISUALDIR or self.VISUALDIR)
             self.CP_IMGPATH = Path(CP_IMGPATH or self.ROOT.joinpath(self.IMGDIR))
-        
+            self.YOLOPATH = Path(YOLOPATH or self.ROOT.joinpath(self.YOLOPATH))
         
         annPath = self.ROOT.joinpath(self.ANNDIR).joinpath(self.ANNFILE)
         
@@ -97,6 +103,12 @@ class CCTools(BaseModel):
             logger.info(f"Found images in directory {img_dir}, starting data validation...")
             self._validate_data()
             logger.info("Data validation completed")
+
+    def del_empty_dir(self)->None:
+        """删除空目录"""
+        for dir in self.ROOT.iterdir():
+            if not list(dir.iterdir()):
+                dir.rmdir()
 
 
     def _validate_data(self)->None:
@@ -158,6 +170,62 @@ class CCTools(BaseModel):
             'annotations': list(self.CCDATA.anns.values()),
             'categories': list(self.CCDATA.cats.values())
         }
+    
+    
+    def _YOLO(self)->None:
+        """将数据转换为YOLO格式"""
+        if self.YOLODATA is None:
+            self.YOLODATA = dict()
+        
+        # Create image dict
+        images = {"%g" % x["id"]: x for x in self.CCDATA.dataset["images"]}
+        # Create image-annotations dict
+        imgToAnns = defaultdict(list)
+        for ann in self.CCDATA.dataset["annotations"]:
+            imgToAnns[ann["image_id"]].append(ann)
+
+        # Write labels file
+        for img_id, anns in imgToAnns.items():
+            img = images["%g" % img_id]
+            h, w, f = img["height"], img["width"], img["file_name"]
+
+            bboxes = []
+            for ann in anns:
+                # The COCO box format is [top left x, top left y, width, height]
+                box = np.array(ann["bbox"], dtype=np.float64)
+                box[:2] += box[2:] / 2  # xy top-left corner to center
+                box[[0, 2]] /= w  # normalize x
+                box[[1, 3]] /= h  # normalize y
+                if box[2] <= 0 or box[3] <= 0:  # if w <= 0 and h <= 0
+                    continue
+
+                cls = ann["category_id"] - 1 
+                box = [cls] + box.tolist()
+                if box not in bboxes:
+                    bboxes.append(box)
+            self.YOLODATA[f] = bboxes
+        self.YOLO_id2cls = {cat['id']-1: cat['name'] for cat in self.CCDATA.dataset['categories']}
+    
+    def save_yolo(self)->None:
+        """保存YOLO数据"""
+
+        self.YOLOPATH.mkdir(parents=True,exist_ok=True)
+        
+        assert len(self.YOLODATA), logger.error("YOLODATA is None,please run self._YOLO() first")
+        for filename,labels in self.YOLODATA.items():
+            src_path = self.CP_IMGPATH.joinpath(filename)
+            img_path = self.YOLOPATH.joinpath(filename)
+            if src_path.exists():
+                shutil.copy2(src_path,img_path)
+            else:
+                logger.warning(f"Image not found: {src_path}")
+            
+            label_path = self.YOLOPATH.joinpath(Path(filename).with_suffix(".txt"))
+            # Write
+            with open(label_path, "w") as file:
+                for label in labels:
+                    line = (*label,)  # cls, box or segments
+                    file.write(("%g " * len(line)).rstrip() % line + "\n")    
     
     def _checkpath(self,Var:Optional[str]=None)->None:
         """检查路径是否存在"""
@@ -271,7 +339,7 @@ class CCTools(BaseModel):
             plt.close()
         logger.info(f"Visualization completed. Output saved to {self.ROOT.joinpath(self.VISUALDIR)}")
         
-    def save(self,New:CCTools=None,visual:bool=True,overwrite:bool=True): 
+    def save(self,New:CCTools=None,visual:bool=False,overwrite:bool=True,yolo:bool=False): 
         """
         Args:
             New (CCTools, optional): _description_. Defaults to None.
@@ -279,6 +347,11 @@ class CCTools(BaseModel):
             overwrite (bool, optional): _description_. Defaults to True.
         """
         assert self.CCDATA, logger.error("CCDATA is None")
+        if yolo:
+            self._YOLO()
+            assert len(self.YOLODATA), logger.error("YOLODATA is not None,please run self._YOLO() first")
+            self.save_yolo()
+        
         # 检查CP_IMGPATH是否存在图片
         if self.CP_IMGPATH:
             for img in self.CCDATA.dataset['images']:
@@ -303,31 +376,9 @@ class CCTools(BaseModel):
             New._cp_img()
             New.visual(overwrite=overwrite) if visual else None
 
-
-        # # 原始，必须包含New的版本
-        # src_annFile,src_root,src_annDir,src_imgDir = self.ANNFILE,self.ROOT,self.ANNDIR,self.IMGDIR
-        # if New.ANNFILE is None:
-        #     dst_annFile,dst_root,dst_annDir,dst_imgDir = src_annFile,src_root,src_annDir,src_imgDir
-        # else:
-        #     dst_annFile,dst_root,dst_annDir,dst_imgDir = New.ANNFILE,New.ROOT,New.ANNDIR,New.IMGDIR
+        # 清空多余目录
+        self.del_empty_dir()
         
-        # with open(dst_root.joinpath(dst_annDir).joinpath(dst_annFile), 'w', encoding='utf-8') as json_file:
-        #     json.dump(CCDIT, json_file, ensure_ascii=False, indent=2)  # Use indent parameter to beautify output
-        
-        # # 图片处理
-        # # Copy images to new path
-        # for img in CCDIT['images']:
-        #     src_path = src_root.joinpath(src_imgDir,img['file_name'])
-        #     dst_path = dst_root.joinpath(dst_imgDir,img['file_name'])
-            
-        #     # if overwrite and dst_path.exists():
-        #     #     os.remove(dst_path)
-        #     if not dst_path.exists():
-        #         shutil.copy2(src_path, dst_path)
-        # New.CCDATA = self.CCDATA
-        # # 保存
-        # if visual:
-        #     New.visual(overwrite=overwrite)
         
     def static(self)->Dict:
         """统计数据"""
@@ -426,6 +477,21 @@ class CCTools(BaseModel):
                     logger.warning(f"Category {cat} already exists in other dataset")
         
         return newCat        
+
+    def rename_cat_in_ann(self,old_name:Union[str,int],new_name:Union[str,int]):
+        """
+        只修改标注中的类别，类别中的名称不修改
+        """
+        _,old_id = self._get_cat(old_name,force_int=True)
+        _,new_id = self._get_cat(new_name,force_int=True)
+        assert old_id in [cat['id'] for cat in self.CCDATA.dataset['categories']], \
+            logger.error(f"Category {old_name} not found in dataset")
+        assert new_id in [cat['id'] for cat in self.CCDATA.dataset['categories']], \
+            logger.error(f"Category {new_name} not found in dataset")
+        for ann in self.CCDATA.dataset['annotations']:
+            if ann['category_id'] == old_id:
+                ann['category_id'] = new_id
+        self.CCDATA.createIndex()
     
     def _updateIndex(self,imgIndex:Optional[int]=None,annIndex:Optional[int]=None):
         """
@@ -504,16 +570,19 @@ class CCTools(BaseModel):
 
         self.CCDATA.createIndex()
 
-    def _cp_img(self):
+    def _cp_img(self,dst_path:Optional[Path]=None):
         imglist = self._get_imglist()
         for img in imglist:
             src_path = self.CP_IMGPATH.joinpath(img)
-            dst_path = self.ROOT.joinpath(self.IMGDIR).joinpath(img)
             
-            if dst_path.exists():
+            temp_path = self.ROOT.joinpath(self.IMGDIR).joinpath(img) if dst_path is None else dst_path.joinpath(img)
+            
+            temp_path.parent.mkdir(parents=True,exist_ok=True)
+            
+            if temp_path.exists():
                 continue
             elif src_path.exists():
-                shutil.copy2(src_path, dst_path)
+                shutil.copy2(src_path, temp_path)
             else:
                 logger.warning(f"Image {img} not found in {self.CP_IMGPATH}")
             
@@ -832,14 +901,15 @@ class CCTools(BaseModel):
         srcRoot = self.ROOT.joinpath(self.IMGDIR)
         # 使用self的目录
         
+        
         if newObj:
-            trainObj = CCTools(CCTOOLS_OBJ=newObj,IMGDIR=self.IMGDIR if merge else "Train",ANNFILE="instances_Train.json",CP_IMGPATH=srcRoot)
-            valObj = CCTools(CCTOOLS_OBJ=newObj,IMGDIR=self.IMGDIR if merge else "Val",ANNFILE="instances_Val.json",CP_IMGPATH=srcRoot)
-            testObj = CCTools(CCTOOLS_OBJ=newObj,IMGDIR=self.IMGDIR if merge else "Test",ANNFILE="instances_Test.json",CP_IMGPATH=srcRoot)
+            CCTOOLS_OBJ = newObj
         else:
-            trainObj = CCTools(CCTOOLS_OBJ=self,IMGDIR=self.IMGDIR if merge else "Train",ANNFILE="instances_Train.json",CP_IMGPATH=srcRoot)
-            valObj = CCTools(CCTOOLS_OBJ=self,IMGDIR=self.IMGDIR if merge else "Val",ANNFILE="instances_Val.json",CP_IMGPATH=srcRoot)
-            testObj = CCTools(CCTOOLS_OBJ=self,IMGDIR=self.IMGDIR if merge else "Test",ANNFILE="instances_Test.json",CP_IMGPATH=srcRoot)
+            CCTOOLS_OBJ = self
+        trainObj = CCTools(CCTOOLS_OBJ=CCTOOLS_OBJ,IMGDIR=self.IMGDIR if merge else "Train",ANNFILE="instances_Train.json",CP_IMGPATH=srcRoot)
+        valObj = CCTools(CCTOOLS_OBJ=CCTOOLS_OBJ,IMGDIR=self.IMGDIR if merge else "Val",ANNFILE="instances_Val.json",CP_IMGPATH=srcRoot)
+        testObj = CCTools(CCTOOLS_OBJ=CCTOOLS_OBJ,IMGDIR=self.IMGDIR if merge else "Test",ANNFILE="instances_Test.json",CP_IMGPATH=srcRoot)
+
         
         
         trainObj._CCDATA(train_dict)
@@ -851,62 +921,3 @@ class CCTools(BaseModel):
         testObj.save(visual=visual)
         return trainObj,valObj,testObj
         
-        
-        # if newObj:
-        #     srcRoot = self.ROOT.joinpath(self.IMGDIR)
-            
-        #     trainObj = copy.deepcopy(newObj)
-
-            
-        #     trainObj._CCDATA(train_dict)
-        #     trainObj.ANNFILE = Path("instances_Train.json")
-        #     train_imglist = trainObj._get_imglist()
-            
-        #     dstRoot = newObj.ROOT.joinpath(newObj.IMGDIR)
-            
-        #     if not merge:
-        #         dstRoot = newObj.ROOT.joinpath("Train")
-            
-        #     for img in train_imglist:
-        #         src_path = srcRoot.joinpath(img)
-        #         dst_path = dstRoot.joinpath(img)
-        #         shutil.copy2(src_path, dst_path)
-        #     trainObj.save(New=trainObj,visual=visual)
-            
-            
-            
-        #     valObj = copy.deepcopy(newObj)
-        #     valObj._CCDATA(val_dict)
-        #     valObj.ANNFILE = Path("instances_Val.json")
-        #     val_imglist = valObj._get_imglist()
-            
-        #     if not merge:
-        #         dstRoot = newObj.ROOT.joinpath("Val")
-            
-        #     for img in val_imglist:
-        #         src_path = srcRoot.joinpath(img)
-        #         dst_path = dstRoot.joinpath(img)
-        #         shutil.copy2(src_path, dst_path)
-        #     valObj.save(New=valObj,visual=visual)
-            
-            
-        #     testObj = copy.deepcopy(newObj)
-        #     testObj._CCDATA(test_dict)
-        #     testObj.ANNFILE = Path("instances_Test.json")
-        #     test_imglist = testObj._get_imglist()
-            
-        #     if not merge:
-        #         dstRoot = newObj.ROOT.joinpath("Test")
-            
-            
-            
-        #     for img in test_imglist:
-        #         src_path = srcRoot.joinpath(img)
-        #         dst_path = dstRoot.joinpath(img)
-        #         shutil.copy2(src_path, dst_path)
-        #     testObj.save(New=testObj,visual=visual)
-            
-
-        #     return trainObj,valObj,testObj
-        # else:
-        #     return train_dict,val_dict,test_dict

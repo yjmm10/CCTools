@@ -41,7 +41,7 @@ def merge_one2():
 
 @pytest.fixture
 def split_file():
-    return CCTools(ROOT="/nas/projects/Github/CCTools/idp_q4/jingpin/raw/国标文件", ANNFILE=Path("instances_default.json"), IMGDIR=TEST_IMGDIR, ANNDIR=TEST_ANNDIR)
+    return CCTools(ROOT=TEST_ROOT, ANNFILE=Path("instances_split.json"), IMGDIR=TEST_IMGDIR, ANNDIR=TEST_ANNDIR)
 
 
 def test_cctools_init_with_file():
@@ -97,7 +97,7 @@ def test_save_new(ccdata_file):
     # 创建临时目录
     with tempfile.TemporaryDirectory() as NEW_ROOT:
         NEW_ROOT = Path(NEW_ROOT)
-        ccdata_file.save(visual=True,overwrite=True)
+        ccdata_file.save(New=CCTools(ROOT=NEW_ROOT),visual=True,overwrite=True)
         assert NEW_ROOT.exists()
         assert NEW_ROOT.joinpath(TEST_ANNDIR).exists()
         assert NEW_ROOT.joinpath(TEST_IMGDIR).exists()
@@ -110,8 +110,18 @@ def test_static(ccdata_file):
     result = ccdata_file.static()
     assert result['total_images'] == len(ccdata_file.CCDATA.dataset['images'])
     assert result['total_annotations'] == len(ccdata_file.CCDATA.dataset['annotations'])
-    
-    
+
+def test_yolo(ccdata_file):
+    ccdata_file._YOLO()
+    assert ccdata_file.YOLODATA is not None
+
+def test_save_yolo(ccdata_file):
+    ccdata_file._YOLO()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        ccdata_file.YOLOPATH = Path(temp_dir)
+        ccdata_file.save_yolo()
+        assert Path(temp_dir).exists()
+
 def test_update_cat(ccdata_file):
     newCat = {3:'Text',2:'Table',1:'Formula',4:'Figure'}
     ccdata_file.update_cat(newCat=newCat)
@@ -131,7 +141,11 @@ def test_get_cat(ccdata_file):
     assert ccdata_file._get_cat(cat=4) == (True,'Figure')
     assert ccdata_file._get_cat(cat='Figure2') == (False,None)
     assert ccdata_file._get_cat(cat=5) == (False,None)
-   
+
+def test_rename_cat_in_ann(ccdata_file):
+    ccdata_file.rename_cat_in_ann(old_name='Formula',new_name='Text')
+    assert all([ann['category_id'] != 3 for ann in ccdata_file.CCDATA.dataset['annotations']])
+
 
 def test_get_img(ccdata_file):
     assert ccdata_file._get_img(img='a new precession formula(fukushima 2003)_5.jpg') == (True,1)    
@@ -274,11 +288,11 @@ def test_correct(ccdata_file):
         assert len(formula_anns) == 0
 
 def test_split(split_file):
-    # with tempfile.TemporaryDirectory() as temp_dir:
-    temp_dir = Path("split_test")
-    newObj = CCTools(ROOT=Path(temp_dir))
-    trainObj,valObj,testObj = split_file.split(ratio=[0.6,0.4],newObj=newObj,by_file=False,visual=True)
-    assert len(trainObj.CCDATA.dataset['images']) + len(valObj.CCDATA.dataset['images']) + len(testObj.CCDATA.dataset['images']) <= len(split_file.CCDATA.dataset['images'])
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = Path(temp_dir)
+        newObj = CCTools(ROOT=temp_dir)
+        trainObj,valObj,testObj = split_file.split(ratio=[0.6,0.4],newObj=newObj,by_file=False,visual=True)
+        assert len(trainObj.CCDATA.dataset['images']) + len(valObj.CCDATA.dataset['images']) + len(testObj.CCDATA.dataset['images']) <= len(split_file.CCDATA.dataset['images'])
 
 
 

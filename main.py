@@ -1,10 +1,13 @@
 import os
+from pathlib import Path
 from cctools import CCTools
 
 
 import tempfile
 
 import cv2
+
+from cctools.pipeline import Pipeline
 
 CATS = {1:"Paragraph",2:"Head",3:"Footnote",4:"HeaderFooter",5:"Caption",6:"Table",7:"Figure",8:"Formula",9:"Wireless",10:"Form"}
 all_docs = [
@@ -238,13 +241,163 @@ def static():
         res.append(ccdata_files)
     print(res)
     
+
+
+def pipeline_custom():
+    pipeline = Pipeline()
+    data_root = Path("idp_q4")
+    result,stats = pipeline.static_data(data_root,target_dirs=["annotations","images"],data_match={"instances_default_1.json":"images","instances_default.json":"images","instances_default.json":"images"},static_file=data_root.joinpath("static.xlsx"))
+
+
+def diff_image(img1_path, img2_path, output_path):
+    """
+    计算两张图片的像素差值并保存
     
+    Args:
+        img1_path: 第一张图片路径
+        img2_path: 第二张图片路径  
+        output_path: 输出差值图路径
+    """
+    import cv2
+    import numpy as np
     
+    # 读取两张图片
+    img1 = cv2.imread(img1_path)
+    img2 = cv2.imread(img2_path)
     
+    # 确保两张图片尺寸一致
+    # assert img1.shape == img2.shape, print(img1.shape, img2.shape)
+    if img1.shape != img2.shape:
+        if img1.shape[0] * img1.shape[1] < img2.shape[0] * img2.shape[1]:
+            img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]))
+        else:
+            img1 = cv2.resize(img1, (img2.shape[1], img2.shape[0]))
+    
+    # 计算差值
+    diff = cv2.absdiff(img1, img2)
+    
+    # 保存差值图
+    cv2.imwrite(output_path, diff)
+
+
+def IDP_dla_data(ROOT="idp_q4/Q4-Part2",ANNFILE="instances_default1.json",RATIO=[0.5,0.2,0.3],DST_ROOT="idp_q4/datasets",by_file=True,index=False,YOLOROOT="idp_q4/DLA_YOLO"):
+    import shutil
+    ROOT= Path(ROOT)
+    DST_ROOT = Path(DST_ROOT)
+    YOLOROOT = Path(YOLOROOT)
+    IMGDIR = "images"
+    ANNDIR = "annotations"
+    
+    DST_ROOT
+    
+    ccdata_file = CCTools(ROOT=ROOT, ANNFILE=ANNFILE, IMGDIR=IMGDIR, ANNDIR=ANNDIR)
+    # 将公式标签替换为段落
+    ccdata_file.rename_cat_in_ann(old_name='Formula',new_name='Paragraph')
+    DST_ROOT = Path(DST_ROOT).joinpath(ROOT.stem+"_1") if index else Path(DST_ROOT).joinpath(ROOT.stem)
+    YOLOPATH = YOLOROOT.joinpath(DST_ROOT.stem)
+    
+    shutil.rmtree(DST_ROOT,ignore_errors=True)
+    empty_data = CCTools(ROOT=DST_ROOT, ANNFILE=ANNFILE, IMGDIR=IMGDIR, ANNDIR=ANNDIR,empty_init=True)
+    pipeline = Pipeline()
+    config = { 'cctools':ccdata_file,
+                'ratio':RATIO,
+                'by_file':by_file,
+                'visual':False,
+                'newObj':empty_data,
+                'yolopath':YOLOPATH,
+                }
+
+    pipeline.split_data(config=config)
+    
+    ccdata_file._YOLO()
+    YOLO_id2cls = dict(sorted(ccdata_file.YOLO_id2cls.items()))
+    return YOLO_id2cls
+
+# 统计.cache文件比例
+def count_cache_files(root_dir):
+    import json
+    total_files = 0
+    result = []
+    for path in Path(root_dir).rglob('*'):
+        if path.is_file():
+            total_files += 1
+            if path.suffix == '.cache':
+                with open(path, "r") as f:
+                    cache_data = json.load(f)
+                    l_train = len(cache_data["Train"])
+                    l_val = len(cache_data["Val"])
+                    l_test = len(cache_data["Test"])
+                    sum_all = l_train + l_val + l_test
+                    result.append(f"{path}: {l_train/sum_all:.2f}:{l_val/sum_all:.2f}:{l_test/sum_all:.2f}")
+    for i in result:
+        print(i)
+        
+def make_yolo_cfg(root_dir,id2cls,output_file="yolo_list.yaml"):
+    """统计yolo目录下的list文件分布"""
+    from collections import defaultdict
+    result = defaultdict(list)
+    
+    for folder in Path(root_dir).iterdir():
+        if folder.is_dir():
+            for mod in ["Train","Test","Val"]:
+                if mod in folder.name:
+                    result[mod].append(folder.name)
+    
+    # 定义映射关系
+    output_map = {
+        "train": "Train",
+        "val": "Val",
+        "test": "Test"
+    }
+    with open(output_file,"w") as f:
+        f.write(f"path: {root_dir}\n")
+        for key, mod in output_map.items():
+            result_list = result[mod] if mod else []  # 如果mod为空字符串，使用空列表
+            f.write(f"{key}: {result_list}\n")
+    
+        f.write("names:\n")
+        for id,cls in id2cls.items():
+            f.write(f"  {id}: {cls}\n")
+    
+    print(f"yolo list file has been saved to {output_file}")
+    
+                
+
 
 if __name__ == "__main__":
-    merge()
+    # merge()
     # filter_to_correct()
     # static()
     
+    
+    # pipeline_custom()
+    # 临时测试，可删
+    # diff_image("1.png","2.png","diff.png")
+    DST_ROOT = "idp_q4/DLA_COCO"
+    YOLO_ROOT = "idp_q4/DLA_YOLO"
+    IDP_dla_data(ROOT="idp_q4/Q4-Part2",ANNFILE="instances_default_1.json",RATIO=[0.5,0.2,0.3],DST_ROOT=DST_ROOT,index=True,YOLOROOT=YOLO_ROOT)
+    IDP_dla_data(ROOT="idp_q4/Q4-Part2",ANNFILE="instances_default.json",RATIO=[0.5,0.2,0.3],DST_ROOT=DST_ROOT,YOLOROOT=YOLO_ROOT)
+    YOLO_id2cls = IDP_dla_data(ROOT="idp_q4/Q4-Part3_Align",ANNFILE="instances_default.json",RATIO=[0.7,0.3],DST_ROOT=DST_ROOT,by_file=False,YOLOROOT=YOLO_ROOT)
+    IDP_dla_data(ROOT="idp_q4/Q4-Part1",ANNFILE="instances_default.json",RATIO=[0.7,0.3],DST_ROOT=DST_ROOT,YOLOROOT=YOLO_ROOT)
+
+    count_cache_files("idp_q4")
+    make_yolo_cfg(YOLO_ROOT,YOLO_id2cls)
+    
+    # newCat = {
+    #     1: "Paragraph",
+    #     2: "Head",
+    #     3: "Footnote",
+    #     4: "HeaderFooter",
+    #     5: "Caption",
+    #     6: "Table",
+    #     7: "Figure",
+    #     8: "Formula",
+    #     9: "Wireless",
+    #     10: "Form"
+    # }
+    # ccdata_file = CCTools(ROOT="idp_q4/Q4-Part3")
+    # ccdata_file.update_cat(newCat=newCat)
+    # newObj = CCTools(ROOT="idp_q4/Q4-Part3_Align",CCDATA=ccdata_file.CCDATA,CP_IMGPATH=ccdata_file.ROOT.joinpath(ccdata_file.IMGDIR))
+    # newObj.save()
+    pass
     
