@@ -328,7 +328,7 @@ def count_cache_files(root_dir):
                     l_val = len(cache_data["Val"])
                     l_test = len(cache_data["Test"])
                     sum_all = l_train + l_val + l_test
-                    result.append(f"{path}: {l_train/sum_all:.2f}:{l_val/sum_all:.2f}:{l_test/sum_all:.2f}")
+                    result.append(f"{path}: {l_train}:{l_val}:{l_test}===>>> {l_train/sum_all:.2f}:{l_val/sum_all:.2f}:{l_test/sum_all:.2f}")
     for i in result:
         print(i)
         
@@ -349,8 +349,8 @@ def make_yolo_cfg(root_dir,id2cls,output_file="yolo_list.yaml"):
         "val": "Val",
         "test": "Test"
     }
-    with open(output_file,"w") as f:
-        f.write(f"path: {root_dir}\n")
+    with open(os.path.join(root_dir,output_file),"w") as f:
+        f.write(f"path: {os.path.abspath(root_dir)}\n")
         for key, mod in output_map.items():
             result_list = result[mod] if mod else []  # 如果mod为空字符串，使用空列表
             f.write(f"{key}: {result_list}\n")
@@ -361,7 +361,137 @@ def make_yolo_cfg(root_dir,id2cls,output_file="yolo_list.yaml"):
     
     print(f"yolo list file has been saved to {output_file}")
     
+def idp_dla_pipeline(root_dir="idp_q4"):
+    CVAT_ROOT = os.path.join(root_dir,"DLA_CVAT")
+    DST_ROOT = os.path.join(root_dir,"DLA_COCO")
+    YOLO_ROOT = os.path.join(root_dir,"DLA_YOLO")
+    
+    os.makedirs(DST_ROOT,exist_ok=True)
+    os.makedirs(YOLO_ROOT,exist_ok=True)
+    
+    # 提取共同参数
+    common_params = {
+        "DST_ROOT": DST_ROOT,
+        "YOLOROOT": YOLO_ROOT
+    }
+
+    # 默认配置参数
+    default_params = {
+        "ANNFILE": "instances_default.json",
+        "RATIO": [0.7, 0.3]
+    }
+
+    # 特殊配置参数
+    special_configs = {
+        "Q4-Part2": {
+            "ANNFILE": ["instances_default.json","instances_default_1.json"],
+            "RATIO": [[0.5, 0.2, 0.3],[0.5, 0.2, 0.3]],
+            "index": [False,True]
+        },
+
+        "Q4-Part3_Align": {
+            "by_file": False
+        }
+    }
+
+    # 遍历目录下所有文件夹
+    for folder in Path(CVAT_ROOT).iterdir():
+        if folder.is_dir() and not folder.name.startswith('.'):
+            # 跳过输出目录
+            if folder.name in ["DLA_COCO", "DLA_YOLO"]:
+                continue
                 
+            # 基础配置
+            config = {
+                "ROOT": str(folder)
+            }
+            
+            # 合并默认参数
+            config.update(default_params)
+            
+            # 如果有特殊配置则更新
+            if folder.name in special_configs:
+                special_config = special_configs[folder.name]
+                
+                # 检查是否有多个配置
+                if any(isinstance(v, list) for v in special_config.values()):
+                    # 获取列表长度
+                    list_lens = [len(v) for v in special_config.values() if isinstance(v, list)]
+                    num_configs = list_lens[0] if list_lens else 1
+                    
+                    # 对每个配置执行处理
+                    for i in range(num_configs):
+                        curr_config = {}
+                        for k,v in special_config.items():
+                            if isinstance(v, list):
+                                curr_config[k] = v[i]
+                            else:
+                                curr_config[k] = v
+                                
+                        params = {**common_params, **config, **curr_config}
+                        
+                        # 处理数据
+                        if folder.name == "Q4-Part3_Align":
+                            YOLO_id2cls = IDP_dla_data(**params)
+                        else:
+                            IDP_dla_data(**params)
+                else:
+                    config.update(special_config)
+                    params = {**common_params, **config}
+                    
+                    # 处理数据
+                    if folder.name == "Q4-Part3_Align":
+                        YOLO_id2cls = IDP_dla_data(**params)
+                    else:
+                        IDP_dla_data(**params)
+            else:
+                params = {**common_params, **config}
+                
+                # 处理数据
+                if folder.name == "Q4-Part3_Align":
+                    YOLO_id2cls = IDP_dla_data(**params)
+                else:
+                    IDP_dla_data(**params)
+
+    count_cache_files(CVAT_ROOT)
+    make_yolo_cfg(YOLO_ROOT,YOLO_id2cls,output_file="DLA_Q4_20241107.yaml")
+
+def idp_correct_pipeline(root_dir="idp_q4"):
+    
+    
+    
+    # 对齐
+    TODO_ROOT = os.path.join(root_dir,"PROCESS")
+    newCat = {
+        1: "Paragraph",
+        2: "Head",
+        3: "Footnote",
+        4: "HeaderFooter",
+        5: "Caption",
+        6: "Table",
+        7: "Figure",
+        8: "Formula",
+        9: "Wireless",
+        10: "Form"
+    }
+    # 遍历目录
+    for folder in Path(TODO_ROOT).iterdir():
+        # 检查是否为文件夹
+        if folder.is_dir():
+            # 获取文件夹名称
+            folder_name = folder.name
+            # 如果文件夹名称在预定义的列表中,则跳过
+            if folder_name in ["DLA_COCO", "DLA_YOLO"]:
+                continue
+            
+            # 处理该文件夹下的内容
+            ccdata = CCTools(ROOT=str(folder))
+            ccdata.update_cat(newCat=newCat)
+            newObj = CCTools(ROOT=str(folder) + "_Align", CCDATA=ccdata.CCDATA, CP_IMGPATH=ccdata.ROOT.joinpath(ccdata.IMGDIR))
+            newObj.save()
+    
+    # 合并
+    
 
 
 if __name__ == "__main__":
@@ -373,31 +503,11 @@ if __name__ == "__main__":
     # pipeline_custom()
     # 临时测试，可删
     # diff_image("1.png","2.png","diff.png")
-    DST_ROOT = "idp_q4/DLA_COCO"
-    YOLO_ROOT = "idp_q4/DLA_YOLO"
-    IDP_dla_data(ROOT="idp_q4/Q4-Part2",ANNFILE="instances_default_1.json",RATIO=[0.5,0.2,0.3],DST_ROOT=DST_ROOT,index=True,YOLOROOT=YOLO_ROOT)
-    IDP_dla_data(ROOT="idp_q4/Q4-Part2",ANNFILE="instances_default.json",RATIO=[0.5,0.2,0.3],DST_ROOT=DST_ROOT,YOLOROOT=YOLO_ROOT)
-    YOLO_id2cls = IDP_dla_data(ROOT="idp_q4/Q4-Part3_Align",ANNFILE="instances_default.json",RATIO=[0.7,0.3],DST_ROOT=DST_ROOT,by_file=False,YOLOROOT=YOLO_ROOT)
-    IDP_dla_data(ROOT="idp_q4/Q4-Part1",ANNFILE="instances_default.json",RATIO=[0.7,0.3],DST_ROOT=DST_ROOT,YOLOROOT=YOLO_ROOT)
-
-    count_cache_files("idp_q4")
-    make_yolo_cfg(YOLO_ROOT,YOLO_id2cls)
+    # 正常dla流程
+    idp_dla_pipeline()
+    # 纠正流程
+    # idp_correct_pipeline()
     
-    # newCat = {
-    #     1: "Paragraph",
-    #     2: "Head",
-    #     3: "Footnote",
-    #     4: "HeaderFooter",
-    #     5: "Caption",
-    #     6: "Table",
-    #     7: "Figure",
-    #     8: "Formula",
-    #     9: "Wireless",
-    #     10: "Form"
-    # }
-    # ccdata_file = CCTools(ROOT="idp_q4/Q4-Part3")
-    # ccdata_file.update_cat(newCat=newCat)
-    # newObj = CCTools(ROOT="idp_q4/Q4-Part3_Align",CCDATA=ccdata_file.CCDATA,CP_IMGPATH=ccdata_file.ROOT.joinpath(ccdata_file.IMGDIR))
-    # newObj.save()
+
     pass
     

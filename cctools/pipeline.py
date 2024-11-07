@@ -61,7 +61,9 @@ class Pipeline:
                             ANNFILE=f"instances_{MOD}.json",
                             CP_IMGPATH=cctools.ROOT.joinpath(cctools.IMGDIR),
                             YOLOPATH=Path(str(yolopath)+f"_{MOD}"))
-                
+                if len(cache_data[MOD])==0:
+                    logger.warning(f"No data in {MOD}")
+                    continue
                 cctools.filter(imgs=cache_data[MOD],
                              newObj=obj,
                              visual=visual,
@@ -83,17 +85,13 @@ class Pipeline:
             logger.info(f"Cache file not found: {cache_file}")
             
             trainObj,valObj,testObj = cctools.split(ratio=ratio,newObj=newObj,by_file=by_file,visual=visual,merge=False)
+            
             # visual存在时会自动保存数据
-            
-            if yolopath:
-                trainObj.save(visual=visual,yolo=True)
-                valObj.save(visual=visual,yolo=True)
-                testObj.save(visual=visual,yolo=True)
-            else:
-                trainObj.save(visual=visual)
-                valObj.save(visual=visual)
-                testObj.save(visual=visual)
-            
+            trainObj.save(visual=visual,yolo=True if yolopath else False)
+            valObj.save(visual=visual,yolo=True if yolopath else False)
+            testObj.save(visual=visual,yolo=True if yolopath else False)
+
+            # 写入缓存
             train_img = trainObj._get_imglist()
             val_img = valObj._get_imglist()
             test_img = testObj._get_imglist()
