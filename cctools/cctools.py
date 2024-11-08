@@ -339,7 +339,7 @@ class CCTools(BaseModel):
             plt.close()
         logger.info(f"Visualization completed. Output saved to {self.ROOT.joinpath(self.VISUALDIR)}")
         
-    def save(self,New:CCTools=None,visual:bool=False,overwrite:bool=True,yolo:bool=False): 
+    def save(self,New:CCTools=None,visual:bool=False,overwrite:bool=True,yolo:bool=False,only_ann:bool=False): 
         """
         Args:
             New (CCTools, optional): _description_. Defaults to None.
@@ -351,6 +351,11 @@ class CCTools(BaseModel):
             self._YOLO()
             assert len(self.YOLODATA), logger.error("YOLODATA is not None,please run self._YOLO() first")
             self.save_yolo()
+        
+        if only_ann:
+            with open(self.ROOT.joinpath(self.ANNDIR).joinpath(self.ANNFILE), 'w', encoding='utf-8') as json_file:
+                json.dump(self._DICT(), json_file, ensure_ascii=False, indent=2)  # Use indent parameter to beautify output
+            return
         
         # 检查CP_IMGPATH是否存在图片
         if self.CP_IMGPATH:

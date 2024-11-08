@@ -492,6 +492,34 @@ def idp_correct_pipeline(root_dir="idp_q4"):
     
     # 合并
     
+def merge_pipeline(root_dir="idp_q4/DLA_COCO",output_dir="idp_q4/DLA_COCO_MERGE"):
+    # 目录下必须使用coco数据结构
+    # 遍历目录
+    TrainObjs =[]
+    ValObjs = []
+    TestObjs = []
+    for folder in Path(root_dir).iterdir():
+        if folder.is_dir():
+            for ann in folder.joinpath("annotations").glob("*.json"):
+                if "Train" in ann.stem:
+                    TrainObjs.append(CCTools(ROOT=folder,ANNFILE=ann.name,IMGDIR="Train"))
+                elif "Val" in ann.stem:
+                    ValObjs.append(CCTools(ROOT=folder,ANNFILE=ann.name,IMGDIR="Val"))
+                elif "Test" in ann.stem:
+                    TestObjs.append(CCTools(ROOT=folder,ANNFILE=ann.name,IMGDIR="Test"))
+
+    TrainObj = CCTools(ROOT=output_dir,ANNFILE="instances_Train.json",IMGDIR="images")
+    TrainObj.merge(others=TrainObjs,cat_keep=True,newObj=TrainObj)
+    TrainObj.save(only_ann=True)
+    
+    ValObj = CCTools(ROOT=output_dir,ANNFILE="instances_Val.json",IMGDIR="images")
+    ValObj.merge(others=ValObjs,cat_keep=True,newObj=ValObj)
+    ValObj.save(only_ann=True)
+    
+    TestObj = CCTools(ROOT=output_dir,ANNFILE="instances_Test.json",IMGDIR="images")
+    TestObj.merge(others=TestObjs,cat_keep=True,newObj=TestObj)
+    TestObj.save(only_ann=True)
+    pass
 
 
 if __name__ == "__main__":
@@ -504,10 +532,12 @@ if __name__ == "__main__":
     # 临时测试，可删
     # diff_image("1.png","2.png","diff.png")
     # 正常dla流程
-    idp_dla_pipeline()
+    # idp_dla_pipeline()
     # 纠正流程
     # idp_correct_pipeline()
     
+    # 合并流程
+    merge_pipeline()
 
     pass
     
